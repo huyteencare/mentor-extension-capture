@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meet Capture Viewer</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <div class="viewer-container">
+    <div class="sidebar">
+      <h1>Sessions</h1>
+      <div class="session-list" id="sessionList">
+        <div class="loading">Loading sessions...</div>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="session-detail" id="sessionDetail" style="display: none;">
+        <div class="session-header">
+          <h2 id="sessionTitle">-</h2>
+          <div class="session-info">
+            <span id="sessionInfo">-</span>
+          </div>
+        </div>
+
+        <div class="participants" id="participants">
+          <div class="loading">Loading participants...</div>
+        </div>
+      </div>
+
+      <div class="welcome" id="welcome">
+        <div class="empty-state">
+          <h2>Welcome to Meet Capture Viewer</h2>
+          <p>Select a session from the left to view captured audio and video</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="viewer.js"></script>
+</body>
+</html>
