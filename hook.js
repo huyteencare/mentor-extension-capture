@@ -267,6 +267,7 @@
       if (NOISE.test(s)) return null;
       if (/\b(to your|main screen|presenting|is sharing)\b/i.test(s)) return null;
       if (/\b(can'?t unmute someone else|unmute someone else)\b/i.test(s)) return null;
+      if (/you can'?t remotely\b/i.test(s)) return null;
       if (/^[a-z0-9_-]{18,}$/i.test(s)) return null;
       return s;
     } catch (e) {

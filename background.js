@@ -37,10 +37,10 @@ importScripts('config.js');
       mentorLabel: savedMentorLabel,
       capturedParticipants: [],
       participantNames: new Map(),
-      manuallyNamed: new Set(), // stream IDs named by mentor — never overwritten by DOM scan
-      streamRecords: new Map(), // streamId -> { streamId, kind, firstSeenAt, lastSeenAt, assignedName, ownerId }
-      ownerRecords: new Map(),  // ownerId -> { ownerId, name, streamIds: [] }
-      streamToOwner: new Map(), // streamId -> ownerId
+      manuallyNamed: new Set(),  // stream IDs named by mentor — never overwritten by DOM scan
+      streamRecords: new Map(),  // streamId -> { streamId, kind, firstSeenAt, lastSeenAt, assignedName, ownerId }
+      ownerRecords: new Map(),     // ownerId -> { ownerId, name, streamIds: [] }
+      streamToOwner: new Map(),    // streamId -> ownerId
       ownerCounter: 0,
       tagJoin: {
         lastResetAt: Date.now(),
@@ -192,10 +192,11 @@ importScripts('config.js');
         if (record.assignedName) return false;
         if (record.firstSeenAt < session.tagJoin.lastResetAt) return false;
         if (record.mediaRole === 'mentor-audio') return false;
+        if (record.mediaRole === 'shared-audio') return false;
         if (record.trackSource === 'local') return false;
 
         const detectedName = String(session.participantNames.get(record.streamId) || '').trim();
-        const existingAssigned = detectedName ? findAssignedParticipantByName(session, detectedName) : null;
+        const existingAssigned = detectedName ? findAssignedByDomName(session, detectedName) : null;
         if (record.kind === 'video' && existingAssigned) {
           return false;
         }
@@ -219,12 +220,15 @@ importScripts('config.js');
         .filter((name) => name && name !== 'unknown')
     ));
     const suggestedName = candidateNames.length === 1 ? candidateNames[0] : '';
-    const existingAssigned = suggestedName ? findAssignedParticipantByName(session, suggestedName) : null;
+    const existingAssigned = suggestedName ? findAssignedByDomName(session, suggestedName) : null;
     const hasDistinctSuggestedName = !!(suggestedName && !existingAssigned);
+    // Trigger video-only when name is new (distinct) OR when peer was created but no name yet.
+    // Do NOT trigger on peerCreatedAfterReset alone when the detected name is already a known
+    // participant — that is a rejoin, not a new student.
     const videoOnlyFallback = session.tagJoin.savedCount > 0 &&
       audio.length === 0 &&
       video.length > 0 &&
-      (peerCreatedAfterReset || hasDistinctSuggestedName) &&
+      (hasDistinctSuggestedName || (peerCreatedAfterReset && !suggestedName)) &&
       stableForMs >= TAG_JOIN_VIDEO_ONLY_MS;
     const ready = (hasAudioVideo && stableForMs >= TAG_JOIN_SETTLE_MS) || videoOnlyFallback;
 
@@ -293,20 +297,46 @@ importScripts('config.js');
     return null;
   }
 
-  function createOwner(session, name) {
+  // Like findAssignedParticipantByName but also resolves through the owner's DOM identity.
+  // Handles renames: 'Ducchuy' tagged as 'Huy Tablet' → owner.domName='Ducchuy', owner.name='Huy Tablet'.
+  // On rejoin, DOM sends 'Ducchuy' → findOwnerByDomName matches → returns any assigned stream for that owner.
+  function findAssignedByDomName(session, domName) {
+    const direct = findAssignedParticipantByName(session, domName);
+    if (direct) return direct;
+    const owner = findOwnerByDomName(session, domName);
+    if (!owner) return null;
+    for (const streamId of owner.streamIds) {
+      const record = session.streamRecords.get(streamId);
+      if (record && record.assignedName) return record;
+    }
+    return null;
+  }
+
+  function createOwner(session, name, domName) {
     const ownerId = `student-${++session.ownerCounter}`;
-    const record = { ownerId, name, streamIds: [] };
+    const record = { ownerId, name, domName: domName || name, streamIds: [] };
     session.ownerRecords.set(ownerId, record);
     return record;
   }
 
-  function getOrCreateOwner(session, name) {
+  function getOrCreateOwner(session, name, domName) {
     const target = normalizeName(name);
     if (!target) return null;
     for (const o of session.ownerRecords.values()) {
       if (normalizeName(o.name) === target) return o;
     }
-    return createOwner(session, name);
+    return createOwner(session, name, domName);
+  }
+
+  // Find an owner whose Meet DOM display name matches — used for rejoin detection.
+  // Handles renames: student 'Ducchuy' tagged as 'Huy Tablet' still has domName='Ducchuy'.
+  function findOwnerByDomName(session, domName) {
+    const target = normalizeName(domName);
+    if (!target) return null;
+    for (const o of session.ownerRecords.values()) {
+      if (normalizeName(o.domName || o.name) === target) return o;
+    }
+    return null;
   }
 
   function maybeShowToast(session, tabId) {
@@ -445,16 +475,27 @@ importScripts('config.js');
         if (streamId && name && !session.manuallyNamed.has(streamId)) {
           session.participantNames.set(streamId, name);
           const record = session.streamRecords.get(streamId);
-          const existingAssigned = findAssignedParticipantByName(session, name);
+          const existingAssigned = findAssignedByDomName(session, name);
           if (record &&
               !record.assignedName &&
               existingAssigned &&
               record.kind === 'video' &&
               record.mediaRole === 'student-video') {
-            assignNameToStreams(session, tabId, [streamId], name);
+            // Use the previously assigned name (handles renames: DOM sends 'Ducchuy' but
+            // the mentor had renamed them to 'Huy Tablet' — preserve that manual name).
+            const resolvedName = existingAssigned.assignedName || name;
+            assignNameToStreams(session, tabId, [streamId], resolvedName);
+            // Rejoin auto-assign: dismiss any prematurely shown toast and free the slot
+            // so the next genuinely new student can be detected normally.
+            session.tagJoin.savedCount += 1;
+            session.tagJoin.lastResetAt = Date.now();
+            session.toast.shown = false;
+            session.toast.suppressed = false;
+            chrome.tabs.sendMessage(tabId, { type: 'hide-tag-toast' }).catch(() => {});
+          } else {
+            // DOM scan just found a name — candidate may now be ready with a suggestedName
+            setTimeout(() => maybeShowToast(session, tabId), 500);
           }
-          // DOM scan just found a name — candidate may now be ready with a suggestedName
-          setTimeout(() => maybeShowToast(session, tabId), 500);
         }
         sendResponse({ ok: true });
         return true;
@@ -531,6 +572,12 @@ importScripts('config.js');
           return true;
         }
         assignNameToStreams(session, tabId, candidate.streamIds, name);
+        // Store the DOM display name as the owner's stable identity so rejoins are recognised
+        // even if the mentor gave a different label (e.g. 'Ducchuy' tagged as 'Huy Tablet').
+        const savedOwner = getOrCreateOwner(session, name);
+        if (savedOwner && candidate.suggestedName) {
+          savedOwner.domName = candidate.suggestedName;
+        }
         session.tagJoin.savedCount += 1;
         session.tagJoin.lastResetAt = Date.now();
         session.toast.shown = false;
