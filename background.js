@@ -4,6 +4,7 @@ importScripts('config.js');
   'use strict';
 
   const API_URL = `${API_BASE_URL}/api/capture/batch`;
+  const PRESIGN_URL = `${API_BASE_URL}/api/capture/presign`;
   const UPLOAD_INTERVAL_MS = 8000;
   const TAG_JOIN_SETTLE_MS = 1500;
   const TAG_JOIN_VIDEO_ONLY_MS = 5000;
@@ -373,6 +374,14 @@ importScripts('config.js');
     }, UPLOAD_INTERVAL_MS);
   }
 
+  function dataUrlToUint8Array(dataUrl) {
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
   async function uploadBatch(session) {
     if (session.uploadTimer) {
       clearTimeout(session.uploadTimer);
@@ -381,7 +390,66 @@ importScripts('config.js');
 
     if (session.uploadQueue.length === 0) return;
 
-    const batch = {
+    const queue = session.uploadQueue.slice();
+    session.uploadQueue = [];
+
+    // Separate chunk events (have binary data) from metadata-only events
+    const chunkEvents = queue.filter(e => e.type === 'chunk' && e.payload?.data);
+    const otherEvents = queue.filter(e => !(e.type === 'chunk' && e.payload?.data));
+
+    // Try direct S3 upload for chunk events
+    let directSuccess = false;
+    if (chunkEvents.length > 0) {
+      try {
+        const presignRes = await fetch(PRESIGN_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            meetingId: session.meetingId,
+            sessionId: session.sessionId,
+            chunks: chunkEvents.map(e => ({
+              eventAt: e.at,
+              streamId: e.payload.streamId,
+              participantId: e.payload.participantId,
+              mediaRole: e.payload.mediaRole,
+              kind: e.payload.kind,
+              index: e.payload.index,
+              mimeType: e.payload.mimeType || 'video/webm',
+            }))
+          })
+        });
+
+        if (!presignRes.ok) throw new Error(`Presign ${presignRes.status}`);
+        const { presignedUrls } = await presignRes.json();
+
+        // PUT each chunk binary directly to storage — atomic (all or nothing)
+        const staged = [];
+        await Promise.all(
+          chunkEvents.map(async (event, i) => {
+            const { storageKey, uploadUrl } = presignedUrls[i];
+            const bytes = dataUrlToUint8Array(event.payload.data);
+            const putRes = await fetch(uploadUrl, {
+              method: 'PUT',
+              headers: { 'Content-Type': event.payload.mimeType || 'video/webm' },
+              body: bytes
+            });
+            if (!putRes.ok) throw new Error(`Storage PUT ${putRes.status}`);
+            staged.push({ event, storageKey, byteSize: bytes.byteLength });
+          })
+        );
+
+        // All PUTs succeeded — replace data with storageKey reference
+        for (const { event, storageKey, byteSize } of staged) {
+          event.payload = { ...event.payload, data: undefined, storageKey, byteSize };
+        }
+        directSuccess = true;
+      } catch (err) {
+        console.warn('[Meet Capture] Direct storage upload failed, falling back to base64:', err.message);
+        // payload.data intact on all chunk events → legacy path
+      }
+    }
+
+    const commonFields = {
       meetingId: session.meetingId,
       sessionId: session.sessionId,
       captureRole: 'mentor',
@@ -407,7 +475,12 @@ importScripts('config.js');
         localVideoTracks: session.trackStats.localVideoTracks.size
       },
       uploadAttempts: 1,
-      events: session.uploadQueue.map(e => ({
+      directS3Upload: directSuccess,
+    };
+
+    const batch = {
+      ...commonFields,
+      events: [...otherEvents, ...chunkEvents].map(e => ({
         type: e.type,
         at: e.at,
         pageUrl: '',
@@ -424,23 +497,22 @@ importScripts('config.js');
 
       if (response.ok) {
         const result = await response.json();
-        session.uploadQueue = [];
         session.lastUploadTime = Date.now();
-        console.log(`[Meet Capture] Uploaded ${result.savedEventCount} events`);
+        console.log(`[Meet Capture] Uploaded ${result.savedEventCount} events (direct=${directSuccess})`);
 
-        // Broadcast upload success to popup
         chrome.tabs.sendMessage(session.tabId, {
           type: 'upload-success',
           savedCount: result.savedEventCount
         }).catch(() => {});
       } else {
-        console.warn(`[Meet Capture] Upload failed: ${response.status}`);
+        console.warn(`[Meet Capture] Batch upload failed: ${response.status}`);
+        session.uploadQueue.unshift(...queue);
       }
     } catch (e) {
-      console.error(`[Meet Capture] Upload error (${API_URL}):`, e);
+      console.error(`[Meet Capture] Upload error:`, e);
+      session.uploadQueue.unshift(...queue);
     }
 
-    // Schedule next upload if queue has items
     if (session.uploadQueue.length > 0) {
       scheduleUpload(session);
     }
