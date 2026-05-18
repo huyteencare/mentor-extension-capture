@@ -14,7 +14,9 @@
     "http://127.0.0.1:8787/*",
     "http://localhost:8787/*",
     "http://160.191.244.71:8787/*",
-    "https://ktbzdpbvthnejqjoueln.supabase.co/*"
+    "https://*.supabase.co/*",
+    "https://storage.googleapis.com/*",
+    "https://*.amazonaws.com/*"
   ],
   "background": {
     "service_worker": "background.js"
