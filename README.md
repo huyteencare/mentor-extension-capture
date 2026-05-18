@@ -2,14 +2,22 @@
 
 A Chrome extension that captures per-student audio and video from Google Meet calls (mentor-side) and uploads them to a local API for playback.
 
+## Build Export
+
+```bash
+./build.sh
+```
+
+Exported a zip file, which you can drag and drop it to extesion page to install:
+
+chrome://extensions/
+
 ## Setup
 
 ### 1. Start the API
 
 ```bash
-cd /home/huy/workspace/teencare/meet-capture-api
-npm start
-# Verify: curl http://localhost:8787/health
+https://github.com/huyteencare/meet-capture-mockup-api
 ```
 
 ### 2. Load the extension
