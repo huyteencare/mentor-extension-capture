@@ -8,8 +8,9 @@
 <body>
   <div class="container">
     <div class="header">
-      <h1>Meet Capture</h1>
+      <h1 id="appTitle">Meet Capture</h1>
       <div class="status">
+        <span class="dev-badge dev-only">DEV</span>
         <span class="indicator recording"></span>
         <span class="status-text">Recording</span>
       </div>
@@ -28,7 +29,7 @@
     <div class="section">
       <div class="students-header">
         <h2>Students <span class="count" id="studentCount">(0)</span></h2>
-        <label class="show-all-label">
+        <label class="show-all-label dev-only">
           <input type="checkbox" id="showAllStreams"> show all streams
         </label>
       </div>
@@ -43,8 +44,9 @@
     </div>
 
     <div class="actions">
-      <button id="viewerBtn" class="btn btn-primary">Open Viewer</button>
-      <button id="forceUploadBtn" class="btn btn-secondary">Upload Now</button>
+      <button id="viewerBtn" class="btn btn-primary dev-only">Open Viewer</button>
+      <button id="forceUploadBtn" class="btn btn-secondary dev-only">Upload Now</button>
+      <button id="clearSessionBtn" class="btn btn-danger" disabled>Clear Session</button>
     </div>
   </div>
 

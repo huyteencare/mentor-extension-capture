@@ -23,8 +23,42 @@ html, body {
   padding: 16px;
 }
 
+.server-bar {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: #f0f4ff;
+  border-radius: 6px;
+  border: 1px solid #d0d9f0;
+}
+
+.server-bar label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 4px;
+}
+
+.server-bar input {
+  width: 100%;
+  font-size: 12px;
+  font-family: monospace;
+  border: 1px solid #c7d2e8;
+  border-radius: 4px;
+  padding: 4px 6px;
+  color: #1e3a8a;
+  background: white;
+  outline: none;
+}
+
+.server-bar input:focus {
+  border-color: #3b82f6;
+}
+
 .sidebar h1 {
-  margin: 0 0 16px 0;
+  margin: 0 0 12px 0;
   font-size: 16px;
   font-weight: 600;
   color: #333;
@@ -160,6 +194,46 @@ html, body {
   padding: 20px;
 }
 
+.session-audio-card {
+  border-color: #c8d7f7;
+  background: #fbfcff;
+}
+
+.session-summary-card {
+  border-color: #d9e7d4;
+  background: #fbfdf9;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.summary-item {
+  border: 1px solid #e3eadf;
+  border-radius: 6px;
+  padding: 12px;
+  background: #fff;
+}
+
+.summary-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.summary-meta {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.summary-meta:last-child {
+  margin-bottom: 0;
+}
+
 .participant h3 {
   margin: 0 0 16px 0;
   font-size: 16px;
@@ -200,6 +274,18 @@ video {
   text-align: center;
   color: #999;
   font-size: 14px;
+}
+
+.preview-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #856404;
+  font-weight: 500;
 }
 
 @media (max-width: 768px) {

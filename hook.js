@@ -13,7 +13,10 @@
   const participantNames = new Map();
   const manuallyNamed = new Set();
   const trackToStreamId = new Map(); // track.id → streamId (for DOM scan matching)
+  const videoManualHints = new WeakMap();
+  const capturedLocalTrackIds = new Set();
   let chunkIndex = 0;
+  const VIDEO_MANUAL_HINT_TTL_MS = 15000;
 
   function sendMessage(type, payload) {
     try {
@@ -21,7 +24,23 @@
     } catch (e) {}
   }
 
-  function createRecorder(streamId, stream, kind) {
+  function stopRecorder(streamId, kind) {
+    const key = `${streamId}-${kind}`;
+    const recorder = activeRecorders.get(key);
+    if (!recorder) return;
+
+    try {
+      if (recorder.state !== 'inactive') {
+        recorder.stop();
+      }
+    } catch (e) {
+      console.error('[Hook] stopRecorder error:', e);
+    } finally {
+      activeRecorders.delete(key);
+    }
+  }
+
+  function createRecorder(streamId, stream, kind, options = {}) {
     const key = `${streamId}-${kind}`;
     if (activeRecorders.has(key)) return;
 
@@ -33,21 +52,32 @@
     try {
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       let isFirstChunk = true;
+      let segmentStartedAt = Date.now();
 
       recorder.ondataavailable = (e) => {
         try {
           if (!e.data || e.data.size === 0) return;
           const isInit = isFirstChunk;
           isFirstChunk = false;
+          const chunkEndedAt = Date.now();
+          const chunkStartedAt = segmentStartedAt;
+          const durationMs = Math.max(0, chunkEndedAt - chunkStartedAt);
+          segmentStartedAt = chunkEndedAt;
           const idx = chunkIndex++;
           const reader = new FileReader();
           reader.onload = () => {
             try {
-              const participantId = participantNames.get(streamId) || streamId;
+              const participantId = options.participantId || participantNames.get(streamId) || streamId;
               sendMessage('chunk', {
                 streamId,
                 participantId,
                 kind,
+                mediaRole: options.mediaRole || (kind === 'video' ? 'student-video' : 'shared-audio'),
+                trackSource: options.trackSource || 'remote',
+                mimeType: e.data.type || mimeType || '',
+                chunkStartedAt,
+                chunkEndedAt,
+                durationMs,
                 data: reader.result,
                 initChunk: isInit,
                 index: idx
@@ -64,36 +94,104 @@
       };
 
       recorder.onerror = (e) => console.error('[Hook] MediaRecorder error:', e);
-      recorder.start(10000);
+      recorder.start(3000);
       activeRecorders.set(key, recorder);
-      sendMessage('recorder-started', { streamId, kind });
+      sendMessage('recorder-started', {
+        streamId,
+        kind,
+        mediaRole: options.mediaRole || (kind === 'video' ? 'student-video' : 'shared-audio'),
+        trackSource: options.trackSource || 'remote',
+        participantId: options.participantId || participantNames.get(streamId) || streamId,
+        mimeType
+      });
     } catch (e) {
       console.error('[Hook] createRecorder error:', e);
     }
   }
 
-  function startCapture(streamId, track) {
+  function startCapture(streamId, track, options = {}) {
     try {
       if (!activeStreams.has(streamId)) {
-        activeStreams.set(streamId, { audio: false, video: false });
+        activeStreams.set(streamId, {
+          audioTrackId: null,
+          videoTrackId: null
+        });
       }
       const seen = activeStreams.get(streamId);
       const kind = track.kind;
+      const trackKey = kind === 'audio' ? 'audioTrackId' : 'videoTrackId';
+      const previousTrackId = seen[trackKey];
 
       // Always store track ID → streamId so DOM scan can match via getTracks()
       trackToStreamId.set(track.id, streamId);
 
-      if (kind === 'audio' && !seen.audio) {
-        seen.audio = true;
-        createRecorder(streamId, new MediaStream([track]), 'audio');
-        sendMessage('track-captured', { streamId, kind: 'audio' });
-      } else if (kind === 'video' && !seen.video) {
-        seen.video = true;
-        createRecorder(streamId, new MediaStream([track]), 'video');
-        sendMessage('track-captured', { streamId, kind: 'video' });
+      if (previousTrackId === track.id) {
+        return;
+      }
+
+      if (previousTrackId && previousTrackId !== track.id) {
+        console.log('[Hook] track replaced', { streamId, kind, previousTrackId, nextTrackId: track.id });
+        stopRecorder(streamId, kind);
+      }
+
+      seen[trackKey] = track.id;
+
+      if (kind === 'audio') {
+        createRecorder(streamId, new MediaStream([track]), 'audio', options);
+        sendMessage('track-captured', {
+          streamId,
+          kind: 'audio',
+          mediaRole: options.mediaRole || 'shared-audio',
+          trackSource: options.trackSource || 'remote',
+          participantId: options.participantId || participantNames.get(streamId) || streamId
+        });
+      } else if (kind === 'video') {
+        createRecorder(streamId, new MediaStream([track]), 'video', options);
+        sendMessage('track-captured', {
+          streamId,
+          kind: 'video',
+          mediaRole: options.mediaRole || 'student-video',
+          trackSource: options.trackSource || 'remote',
+          participantId: options.participantId || participantNames.get(streamId) || streamId
+        });
       }
     } catch (e) {
       console.error('[Hook] startCapture error:', e);
+    }
+  }
+
+  function captureLocalAudioTrack(track, pcId) {
+    try {
+      if (!track || track.kind !== 'audio') return;
+      if (capturedLocalTrackIds.has(track.id)) return;
+      capturedLocalTrackIds.add(track.id);
+
+      const streamId = `mentor-local-audio-${track.id}`;
+      participantNames.set(streamId, '__mentor__');
+      startCapture(streamId, track, {
+        mediaRole: 'mentor-audio',
+        participantId: '__mentor__',
+        trackSource: 'local'
+      });
+      sendMessage('local-track', {
+        pcId,
+        streamId,
+        kind: 'audio',
+        mediaRole: 'mentor-audio',
+        participantId: '__mentor__',
+        trackSource: 'local'
+      });
+    } catch (e) {
+      console.error('[Hook] captureLocalAudioTrack error:', e);
+    }
+  }
+
+  function inspectLocalSenders(pc, pcId) {
+    try {
+      const senders = typeof pc.getSenders === 'function' ? pc.getSenders() : [];
+      senders.forEach((sender) => captureLocalAudioTrack(sender?.track, pcId));
+    } catch (e) {
+      console.error('[Hook] inspectLocalSenders error:', e);
     }
   }
 
@@ -107,12 +205,30 @@
         try {
           const streamId = (e.streams && e.streams[0]) ? e.streams[0].id : e.track.id;
           console.log('[Hook] track event', { pcId, streamId, kind: e.track.kind, streamsLen: e.streams?.length });
-          startCapture(streamId, e.track);
-          sendMessage('remote-track', { pcId, streamId, kind: e.track.kind });
+          startCapture(streamId, e.track, {
+            mediaRole: e.track.kind === 'video' ? 'student-video' : 'shared-audio',
+            trackSource: 'remote'
+          });
+          sendMessage('remote-track', {
+            pcId,
+            streamId,
+            kind: e.track.kind,
+            mediaRole: e.track.kind === 'video' ? 'student-video' : 'shared-audio',
+            trackSource: 'remote'
+          });
         } catch (err) {
           console.error('[Hook] track event error:', err);
         }
       });
+
+      const inspectSoon = () => setTimeout(() => inspectLocalSenders(pc, pcId), 0);
+      inspectSoon();
+      setTimeout(() => inspectLocalSenders(pc, pcId), 1500);
+      setTimeout(() => inspectLocalSenders(pc, pcId), 5000);
+      setTimeout(() => inspectLocalSenders(pc, pcId), 10000);
+
+      pc.addEventListener('negotiationneeded', inspectSoon);
+      pc.addEventListener('signalingstatechange', inspectSoon);
     } catch (e) {
       console.error('[Hook] wrapPeerConnection error:', e);
     }
@@ -150,11 +266,37 @@
       if (!s || s.length < 2 || s.length > 40) return null;
       if (NOISE.test(s)) return null;
       if (/\b(to your|main screen|presenting|is sharing)\b/i.test(s)) return null;
+      if (/\b(can'?t unmute someone else|unmute someone else)\b/i.test(s)) return null;
       if (/^[a-z0-9_-]{18,}$/i.test(s)) return null;
       return s;
     } catch (e) {
       return null;
     }
+  }
+
+  function getSingleName(values) {
+    const names = Array.from(new Set(
+      values
+        .map((value) => cleanName(value))
+        .filter(Boolean)
+    ));
+    return names.length === 1 ? names[0] : '';
+  }
+
+  function rememberManualVideoHint(video, name) {
+    const clean = cleanName(name);
+    if (!video || !clean) return;
+    videoManualHints.set(video, { name: clean, seenAt: Date.now() });
+  }
+
+  function getManualVideoHint(video) {
+    const hint = videoManualHints.get(video);
+    if (!hint) return '';
+    if (Date.now() - hint.seenAt > VIDEO_MANUAL_HINT_TTL_MS) {
+      videoManualHints.delete(video);
+      return '';
+    }
+    return hint.name || '';
   }
 
   function guessNameFromVideo(video) {
@@ -215,7 +357,16 @@
           }
           if (matchedStreamIds.size === 0) continue;
 
-          const name = guessNameFromVideo(video);
+          const manualInheritedName = getSingleName(
+            Array.from(matchedStreamIds)
+              .filter((sid) => manuallyNamed.has(sid))
+              .map((sid) => participantNames.get(sid))
+          );
+          if (manualInheritedName) {
+            rememberManualVideoHint(video, manualInheritedName);
+          }
+
+          const name = manualInheritedName || guessNameFromVideo(video) || getManualVideoHint(video);
           if (!name) continue;
 
           for (const sid of matchedStreamIds) {

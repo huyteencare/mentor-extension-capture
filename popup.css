@@ -339,6 +339,47 @@ body {
   background: #eeeeee;
 }
 
+.btn-danger {
+  background: #f5f5f5;
+  color: #d93025;
+  border: 1px solid #f5c6c3;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #fce8e6;
+  border-color: #d93025;
+}
+
+.btn-danger:disabled {
+  color: #ccc;
+  border-color: #eee;
+  cursor: not-allowed;
+}
+
 .btn:active {
   transform: scale(0.98);
+}
+
+/* Dev mode — hidden by default, shown when body has .dev-mode */
+.dev-only {
+  display: none !important;
+}
+
+body.dev-mode .dev-only {
+  display: revert !important;
+}
+
+/* The show-all-label is a flex row — restore that specifically */
+body.dev-mode label.show-all-label.dev-only {
+  display: flex !important;
+}
+
+.dev-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: white;
+  background: #e37400;
+  border-radius: 3px;
+  padding: 1px 5px;
+  letter-spacing: 0.5px;
 }

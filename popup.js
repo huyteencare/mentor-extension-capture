@@ -9,7 +9,32 @@
   const queueSizeDiv = document.getElementById('queueSize');
   const viewerBtn = document.getElementById('viewerBtn');
   const forceUploadBtn = document.getElementById('forceUploadBtn');
+  const clearSessionBtn = document.getElementById('clearSessionBtn');
   const showAllStreamsCheckbox = document.getElementById('showAllStreams');
+  const appTitle = document.getElementById('appTitle');
+
+  // Restore dev mode state on open
+  chrome.storage.local.get('devMode', (data) => {
+    if (data && data.devMode) document.body.classList.add('dev-mode');
+  });
+
+  // Secret: tap the title 5 times within 3s to toggle dev mode
+  let devTapCount = 0;
+  let devTapTimer = null;
+  appTitle.addEventListener('click', () => {
+    devTapCount++;
+    clearTimeout(devTapTimer);
+    devTapTimer = setTimeout(() => { devTapCount = 0; }, 3000);
+    if (devTapCount >= 5) {
+      devTapCount = 0;
+      chrome.storage.local.get('devMode', (data) => {
+        const next = !data.devMode;
+        chrome.storage.local.set({ devMode: next }, () => {
+          document.body.classList.toggle('dev-mode', next);
+        });
+      });
+    }
+  });
 
   let activeTabId = null;
 
@@ -35,7 +60,9 @@
 
   function getCandidateMessage(candidate) {
     if (!candidate || candidate.status === 'waiting') return 'Admit one student, then wait for audio and video.';
+    if (candidate.status === 'replacement-video') return 'Video changed, but this looks like Meet track refresh, not a new student yet.';
     if (candidate.timedOut && !candidate.ready) return 'Still missing audio or video. Check Meet, or use show all streams.';
+    if (candidate.status === 'ready-video-only' && candidate.suggestedName) return `Video ready for ${candidate.suggestedName}. Meet did not expose a new audio stream.`;
     if (candidate.status === 'ready-video-only') return 'Video ready. Meet did not expose a new audio stream for this student.';
     if (candidate.status === 'waiting-audio') return 'Video found. Waiting for audio stream.';
     if (candidate.status === 'waiting-video') return 'Audio found. Waiting for video stream.';
@@ -57,7 +84,7 @@
       ? `${candidate.videoCount || 0} video / ${candidate.audioCount || 0} audio${candidate.videoOnly ? ' · video-only' : ''}`
       : 'No new streams';
     const disabledAttr = ready ? '' : 'disabled';
-    const inputValue = ready ? preserveValue : '';
+    const inputValue = preserveValue || candidate?.suggestedName || '';
 
     return `
       <div class="tag-join-item ${ready ? 'ready' : 'waiting'} ${candidate?.videoOnly ? 'video-only' : ''}">
@@ -168,6 +195,10 @@
         eventCountDiv.textContent = response.eventCount || 0;
         queueSizeDiv.textContent = response.queueSize || 0;
 
+        const hasEvents = (response.eventCount || 0) > 0;
+        const queueEmpty = (response.queueSize || 0) === 0;
+        clearSessionBtn.disabled = !(hasEvents && queueEmpty);
+
         renderStudents(response);
       });
     });
@@ -206,6 +237,15 @@
     sendToBackground({ type: 'force-upload' }, () => {
       forceUploadBtn.textContent = 'Uploading...';
       setTimeout(() => { forceUploadBtn.textContent = 'Upload Now'; updateUI(); }, 1500);
+    });
+  });
+
+  clearSessionBtn.addEventListener('click', () => {
+    sendToBackground({ type: 'clear-session' }, (resp) => {
+      if (resp?.ok) {
+        clearSessionBtn.textContent = 'Cleared';
+        setTimeout(() => { clearSessionBtn.textContent = 'Clear'; updateUI(); }, 800);
+      }
     });
   });
 
