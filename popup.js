@@ -58,86 +58,20 @@
     }[ch]));
   }
 
-  function getCandidateMessage(candidate) {
-    if (!candidate || candidate.status === 'waiting') return 'Admit one student, then wait for audio and video.';
-    if (candidate.status === 'replacement-video') return 'Video changed, but this looks like Meet track refresh, not a new student yet.';
-    if (candidate.timedOut && !candidate.ready) return 'Still missing audio or video. Check Meet, or use show all streams.';
-    if (candidate.status === 'ready-video-only' && candidate.suggestedName) return `Video ready for ${candidate.suggestedName}. Meet did not expose a new audio stream.`;
-    if (candidate.status === 'ready-video-only') return 'Video ready. Meet did not expose a new audio stream for this student.';
-    if (candidate.status === 'waiting-audio') return 'Video found. Waiting for audio stream.';
-    if (candidate.status === 'waiting-video') return 'Audio found. Waiting for video stream.';
-    if (candidate.status === 'settling') return 'Audio and video found. Stabilizing streams...';
-    if (candidate.status === 'ready' && candidate.videoCount > 1) return 'Ready. Multiple video streams detected; confirm only one student was admitted.';
-    if (candidate.status === 'ready') return 'Ready to name this student.';
-    return 'Waiting for student media.';
-  }
-
-  function renderTagJoinRow(candidate) {
-    const ready = !!candidate?.ready;
-    const streamIds = candidate?.streamIds || [];
-    const existingInput = document.querySelector('.tag-join-input');
-    const preserveValue = existingInput && document.activeElement === existingInput
-      ? existingInput.value
-      : '';
-
-    const streamSummary = streamIds.length > 0
-      ? `${candidate.videoCount || 0} video / ${candidate.audioCount || 0} audio${candidate.videoOnly ? ' · video-only' : ''}`
-      : 'No new streams';
-    const disabledAttr = ready ? '' : 'disabled';
-    const inputValue = preserveValue || candidate?.suggestedName || '';
-
-    return `
-      <div class="tag-join-item ${ready ? 'ready' : 'waiting'} ${candidate?.videoOnly ? 'video-only' : ''}">
-        <div class="tag-join-main">
-          <div class="tag-join-title">Next student</div>
-          <div class="tag-join-status">${escapeHtml(getCandidateMessage(candidate))}</div>
-        </div>
-        <div class="tag-join-meta">${escapeHtml(streamSummary)}</div>
-        <input type="text" class="student-name tag-join-input" value="${escapeHtml(inputValue)}" placeholder="Student name" ${disabledAttr}>
-        <button class="save-btn tag-join-save" ${disabledAttr}>&#10003;</button>
-      </div>
-    `;
-  }
-
   function renderSavedRow(group, isDebug) {
     const streamIds = group.allStreamIds || [group.streamId];
-    const inputAttrs = group.name
-      ? `value="${escapeHtml(group.name)}" readonly`
-      : 'value="" placeholder="Student name"';
     return `
       <div class="student-item ${isDebug && !group.name ? 'debug-stream' : 'saved-stream'}" data-stream-ids="${escapeHtml(streamIds.join('|'))}">
         <div class="stream-id">${escapeHtml(String(group.streamId || '').substring(0, 6))}</div>
-        <input type="text" class="student-name" ${inputAttrs}>
-        ${group.name ? '<span class="saved-label">saved</span>' : '<button class="save-btn manual-save">&#10003;</button>'}
+        <input type="text" class="student-name" value="${escapeHtml(group.name || '')}" placeholder="Student name">
+        <button class="save-btn manual-save">&#10003;</button>
       </div>
     `;
   }
 
   function bindStudentActions(response) {
-    const tagInput = studentList.querySelector('.tag-join-input');
-    const tagButton = studentList.querySelector('.tag-join-save');
-    const saveTagJoin = () => {
-      if (!tagInput || tagInput.disabled) return;
-      const name = tagInput.value.trim();
-      if (!name) return;
-      sendToBackground({ type: 'tag-join-save', name }, (resp) => {
-        if (resp?.ok) {
-          tagInput.classList.add('saved');
-          tagInput.blur();
-          setTimeout(updateUI, 300);
-        } else {
-          tagInput.classList.add('error');
-          setTimeout(() => tagInput.classList.remove('error'), 1200);
-        }
-      });
-    };
-    if (tagButton) tagButton.addEventListener('click', saveTagJoin);
-    if (tagInput) tagInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') saveTagJoin();
-    });
-
     studentList.querySelectorAll('.manual-save').forEach((button) => {
-      button.addEventListener('click', () => {
+      const saveManual = () => {
         const row = button.closest('.student-item');
         const input = row?.querySelector('.student-name');
         const streamIds = row?.dataset.streamIds?.split('|').filter(Boolean) || [];
@@ -153,7 +87,14 @@
           input.blur();
           setTimeout(updateUI, 300);
         });
-      });
+      };
+      button.addEventListener('click', saveManual);
+      const input = button.closest('.student-item')?.querySelector('.student-name');
+      if (input) {
+        input.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') saveManual();
+        });
+      }
     });
   }
 
@@ -161,16 +102,13 @@
     if (document.activeElement?.classList?.contains('student-name')) return;
 
     const participants = response.participantNames || [];
-    const candidateIds = new Set(response.tagJoin?.streamIds || []);
     const saved = participants.filter(p => p.name);
     const debug = showAllStreamsCheckbox.checked
-      ? participants.filter(p => !p.name && !candidateIds.has(p.streamId))
+      ? participants.filter(p => !p.name)
       : [];
-    const activeCount = response.tagJoin?.streamIds?.length ? 1 : 0;
-    studentCountSpan.textContent = `(${saved.length + activeCount})`;
+    studentCountSpan.textContent = `(${saved.length})`;
 
     const html = [
-      renderTagJoinRow(response.tagJoin),
       ...saved.map(group => renderSavedRow(group, false)),
       ...debug.map(group => renderSavedRow(group, true))
     ].join('');

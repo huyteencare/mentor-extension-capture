@@ -530,26 +530,41 @@
 
     mediaSource.addEventListener('sourceopen', async () => {
       if (generation !== loadGeneration) return;
+      let sourceBuffer;
       try {
-        const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-        sourceBuffer.mode = 'sequence';
-        let firstChunkSeen = false;
-        for (const chunk of sortedChunks) {
-          if (generation !== loadGeneration) return;
-          const arrayBuf = await loadChunkBuffer(chunk);
-          if (!arrayBuf) continue;
-          if (chunk._meta?.initChunk && firstChunkSeen) {
-            if (typeof sourceBuffer.changeType === 'function') {
-              sourceBuffer.changeType(mimeType);
-            }
-          }
-          firstChunkSeen = true;
-          await appendBuffer(sourceBuffer, arrayBuf);
-        }
-        if (generation === loadGeneration && mediaSource.readyState === 'open') mediaSource.endOfStream();
-      } catch (error) {
-        console.error('Audio player error:', error);
+        sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+      } catch (err) {
+        console.error('[Viewer] Audio addSourceBuffer failed:', err);
+        return;
       }
+      sourceBuffer.mode = 'sequence';
+
+      let firstChunkSeen = false;
+      let skipped = 0;
+
+      for (const chunk of sortedChunks) {
+        if (generation !== loadGeneration) return;
+        const arrayBuf = await loadChunkBuffer(chunk);
+        if (!arrayBuf) continue;
+
+        const isInit = Boolean(chunk._meta?.initChunk);
+        if (isInit && firstChunkSeen && typeof sourceBuffer.changeType === 'function') {
+          try { sourceBuffer.changeType(mimeType); } catch {}
+        }
+        firstChunkSeen = true;
+
+        try {
+          await appendBuffer(sourceBuffer, arrayBuf);
+        } catch {
+          skipped++;
+          if (typeof sourceBuffer.changeType === 'function') {
+            try { sourceBuffer.changeType(mimeType); } catch {}
+          }
+        }
+      }
+
+      if (skipped > 0) console.warn(`[Viewer] Audio: skipped ${skipped} bad chunks`);
+      if (generation === loadGeneration && mediaSource.readyState === 'open') mediaSource.endOfStream();
     });
   }
 

@@ -121,6 +121,10 @@ body {
   user-select: none;
 }
 
+label.show-all-label.dev-only {
+  display: none !important;
+}
+
 .section h2 {
   margin: 0 0 10px 0;
   font-size: 14px;
