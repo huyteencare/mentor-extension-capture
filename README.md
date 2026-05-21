@@ -20,6 +20,12 @@ chrome://extensions/
 https://github.com/huyteencare/meet-capture-mockup-api
 ```
 
+Then update [config.js](/home/huy/workspace/teencare/extension-webcam-v2/config.js) to point the extension at the correct environment:
+
+- Use a local URL such as `http://127.0.0.1:8787` or `http://localhost:8787` when running the API on your machine
+- Use the production/VPS URL when connecting to the deployed API
+- After changing `config.js`, go to `chrome://extensions/` and refresh the extension
+
 ### 2. Load the extension
 
 1. Open `chrome://extensions/`

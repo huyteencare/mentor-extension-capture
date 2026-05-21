@@ -67,7 +67,7 @@
           const reader = new FileReader();
           reader.onload = () => {
             try {
-              const participantId = options.participantId || participantNames.get(streamId) || streamId;
+              const participantId = options.participantId || streamId;
               sendMessage('chunk', {
                 streamId,
                 participantId,
@@ -101,7 +101,7 @@
         kind,
         mediaRole: options.mediaRole || (kind === 'video' ? 'student-video' : 'shared-audio'),
         trackSource: options.trackSource || 'remote',
-        participantId: options.participantId || participantNames.get(streamId) || streamId,
+        participantId: options.participantId || streamId,
         mimeType
       });
     } catch (e) {
@@ -143,7 +143,7 @@
           kind: 'audio',
           mediaRole: options.mediaRole || 'shared-audio',
           trackSource: options.trackSource || 'remote',
-          participantId: options.participantId || participantNames.get(streamId) || streamId
+          participantId: options.participantId || streamId
         });
       } else if (kind === 'video') {
         createRecorder(streamId, new MediaStream([track]), 'video', options);
@@ -152,7 +152,7 @@
           kind: 'video',
           mediaRole: options.mediaRole || 'student-video',
           trackSource: options.trackSource || 'remote',
-          participantId: options.participantId || participantNames.get(streamId) || streamId
+          participantId: options.participantId || streamId
         });
       }
     } catch (e) {
@@ -253,7 +253,7 @@
 
   // ── DOM scanning: map video srcObject stream IDs → participant names ──────
 
-  const NOISE = /^(mute|you|reframe|default|camera|microphone|speaker|more options|turn on captions|pin)$/i;
+  const NOISE = /^(mute|you|reframe|default|camera|microphone|speaker|more options|turn on captions|pin|raise hand|lower hand|admit|remove|report|block)$/i;
   const ICON_NOISE = /keep_outline|more_vert|mic_none|mic_off|frame_person/i;
 
   function cleanName(text) {
@@ -268,6 +268,9 @@
       if (/\b(to your|main screen|presenting|is sharing)\b/i.test(s)) return null;
       if (/\b(can'?t unmute someone else|unmute someone else)\b/i.test(s)) return null;
       if (/you can'?t remotely\b/i.test(s)) return null;
+      if (/^(tắt tiếng|bật tiếng|ghim video|bỏ ghim|đặt làm tiêu điểm|hủy đặt làm tiêu điểm|xóa tiêu điểm)$/i.test(s)) return null;
+      if (/bạn không thể bật tiếng|không thể tắt tiếng của người khác/i.test(s)) return null;
+      if (/^for\s+\p{L}/u.test(s)) return null;
       if (/^[a-z0-9_-]{18,}$/i.test(s)) return null;
       return s;
     } catch (e) {

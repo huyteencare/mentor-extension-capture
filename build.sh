@@ -10,6 +10,11 @@ import zipfile, os
 files = [
     'manifest.json', 'config.js',
     'hook.js', 'content.js', 'background.js',
+    'background/session-store.js',
+    'background/participant-mapping.js',
+    'background/tag-join.js',
+    'background/upload.js',
+    'background/message-handlers.js',
     'popup.html', 'popup.js', 'popup.css',
     'viewer.html', 'viewer.js', 'viewer.css',
 ]
