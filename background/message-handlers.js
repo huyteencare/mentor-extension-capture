@@ -35,6 +35,8 @@
       peerCreatedAfterReset: session.tagJoin.lastPeerCreatedAt >= session.tagJoin.lastResetAt,
       suggestedName: String(name || '').trim(),
       displayName: identity.displayNameOrUnknown(name),
+      displayNameSource: 'manual',
+      displayNameConfidence: 'high',
       candidateJoinKey,
       provisionalParticipantKey: identity.buildProvisionalParticipantKey({
         suggestedName: name,
@@ -180,6 +182,8 @@
   function handleParticipantNameDetected(context, tabId, payload, sendResponse) {
     const session = context.sessionStore.getSession(context, tabId);
     const { streamId, name } = payload || {};
+    const displayNameSource = String(payload?.source || '').trim() || 'unknown';
+    const displayNameConfidence = String(payload?.confidence || '').trim() || 'low';
     if (streamId && name && !session.manuallyNamed.has(streamId)) {
       context.debugLog.logIdentityDebug(context, 'dom-name-detected', {
         source: 'background/message-handlers',
@@ -190,6 +194,11 @@
         payload: { streamId }
       });
       session.participantNames.set(streamId, name);
+      session.participantNameMeta.set(streamId, {
+        name,
+        source: displayNameSource,
+        confidence: displayNameConfidence
+      });
       const record = session.streamRecords.get(streamId);
       const existingAssigned = context.mapping.findAssignedByDomName(session, name);
       if (existingAssigned) {
@@ -215,6 +224,8 @@
         context.mapping.assignNameToStreams(context, session, tabId, [streamId], resolvedName, {
           domName: name,
           displayName: resolvedName,
+          displayNameSource,
+          displayNameConfidence,
           provisionalParticipantKey: manualCandidate?.provisionalParticipantKey || null
         });
         const savedOwner = context.mapping.getOrCreateOwner(session, resolvedName, name);
@@ -355,6 +366,8 @@
         const manualCandidate = buildManualAttendanceCandidate(session, streamIds, request.name);
         context.mapping.assignNameToStreams(context, session, tabId, streamIds, request.name, {
           displayName: request.name,
+          displayNameSource: 'manual',
+          displayNameConfidence: 'high',
           provisionalParticipantKey: manualCandidate?.provisionalParticipantKey || null
         });
         if (manualCandidate) {
@@ -398,6 +411,8 @@
         }
         context.mapping.assignNameToStreams(context, session, tabId, candidate.streamIds, name, {
           displayName: name,
+          displayNameSource: 'manual',
+          displayNameConfidence: 'high',
           provisionalParticipantKey: candidate.provisionalParticipantKey || null
         });
         const namedCandidate = {

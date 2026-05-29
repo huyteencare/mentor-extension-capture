@@ -41,6 +41,11 @@
         .filter((name) => name && name !== 'unknown')
     ));
     const suggestedName = candidateNames.length === 1 ? candidateNames[0] : '';
+    const suggestedNameMeta = suggestedName
+      ? video
+        .map((record) => session.participantNameMeta.get(record.streamId))
+        .find((meta) => meta && meta.name === suggestedName)
+      : null;
     const existingAssigned = suggestedName ? context.mapping.findAssignedByDomName(session, suggestedName) : null;
     const hasDistinctSuggestedName = !!(suggestedName && !existingAssigned);
     const nameWaitExpired = !!firstSeenAt && now - firstSeenAt >= context.constants.TAG_JOIN_NAME_WAIT_MS;
@@ -92,6 +97,8 @@
       provisionalParticipantKey,
       canonicalIdentityType: null,
       canonicalIdentityValue: null,
+      displayNameSource: suggestedNameMeta?.source || 'unknown',
+      displayNameConfidence: suggestedNameMeta?.confidence || 'low',
       hasDistinctSuggestedName,
       nameWaitExpired,
       timedOut: hasTimedOut,
@@ -126,6 +133,8 @@
       confidence,
       participantDisplayName: participantDisplayName || 'unknown',
       displayName: identity.displayNameOrUnknown(candidate.displayName || participantDisplayName),
+      displayNameSource: String(candidate.displayNameSource || '').trim() || 'unknown',
+      displayNameConfidence: String(candidate.displayNameConfidence || '').trim() || 'low',
       provisionalParticipantKey: candidate.provisionalParticipantKey || identity.buildProvisionalParticipantKey({
         suggestedName: participantDisplayName,
         candidateJoinKey: candidate.candidateJoinKey || identity.buildCandidateJoinKey(candidate)

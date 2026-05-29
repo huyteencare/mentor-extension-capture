@@ -219,26 +219,13 @@
         candidateFirstSeenAt >= Number(windowRecord.openedAt || 0) &&
         candidateFirstSeenAt - Number(windowRecord.openedAt || 0) <= continuityWindowMs
       ));
-      const recentVideoRecords = runtimeOwner.streamIds
-        .map((streamId) => session.streamRecords.get(streamId))
-        .filter((record) => (
-          record &&
-          record.kind === 'video' &&
-          record.mediaRole === 'student-video' &&
-          Number(record.lastSeenAt || 0) > 0 &&
-          candidateFirstSeenAt >= Number(record.lastSeenAt || 0) &&
-          candidateFirstSeenAt - Number(record.lastSeenAt || 0) <= continuityWindowMs
-        ));
+      if (openWindows.length === 0) continue;
 
-      if (openWindows.length === 0 && recentVideoRecords.length === 0) continue;
-
-      const lastWindowAt = openWindows.length > 0 ? Math.max(...openWindows.map((entry) => Number(entry.openedAt || 0))) : 0;
-      const lastRecordAt = recentVideoRecords.length > 0 ? Math.max(...recentVideoRecords.map((record) => Number(record.lastSeenAt || 0))) : 0;
-      const continuityAnchorAt = Math.max(lastWindowAt, lastRecordAt);
+      const lastWindowAt = Math.max(...openWindows.map((entry) => Number(entry.openedAt || 0)));
       matches.push({
         owner: runtimeOwner,
-        reason: openWindows.length > 0 ? 'continuity-window' : 'recent-video-stale',
-        continuityDistanceMs: Math.max(0, candidateFirstSeenAt - continuityAnchorAt)
+        reason: 'continuity-window',
+        continuityDistanceMs: Math.max(0, candidateFirstSeenAt - lastWindowAt)
       });
     }
 
@@ -363,6 +350,11 @@
       if (owner && !owner.streamIds.includes(sid)) owner.streamIds.push(sid);
       if (owner) session.streamToOwner.set(sid, owner.ownerId);
       session.participantNames.set(sid, name);
+      session.participantNameMeta.set(sid, {
+        name,
+        source: String(options.displayNameSource || '').trim() || (session.manuallyNamed.has(sid) ? 'manual' : 'unknown'),
+        confidence: String(options.displayNameConfidence || '').trim() || (session.manuallyNamed.has(sid) ? 'high' : 'low')
+      });
       session.manuallyNamed.add(sid);
       context.messages.queueEvent(context, tabId, 'participant-renamed', {
         streamId: sid,

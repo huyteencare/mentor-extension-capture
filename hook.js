@@ -264,6 +264,7 @@
 
   const NOISE = /^(mute|you|reframe|default|camera|microphone|speaker|more options|turn on captions|pin|raise hand|lower hand|admit|remove|report|block)$/i;
   const ICON_NOISE = /keep_outline|more_vert|mic_none|mic_off|frame_person/i;
+  const ACTION_LABEL_PREFIX = /^(tuỳ chọn khác cho|tuy chon khac cho|more options for|options for|action for)\b/i;
 
   function cleanName(text) {
     try {
@@ -279,6 +280,8 @@
       if (/you can'?t remotely\b/i.test(s)) return null;
       if (/^(tắt tiếng|bật tiếng|ghim video|bỏ ghim|đặt làm tiêu điểm|hủy đặt làm tiêu điểm|xóa tiêu điểm)$/i.test(s)) return null;
       if (/bạn không thể bật tiếng|không thể tắt tiếng của người khác/i.test(s)) return null;
+      if (ACTION_LABEL_PREFIX.test(s)) return null;
+      if (/\bfor\s+[^\s].*$/i.test(s) && /\b(options?|actions?)\b/i.test(s)) return null;
       if (/^for\s+\p{L}/u.test(s)) return null;
       if (/^[a-z0-9_-]{18,}$/i.test(s)) return null;
       return s;
@@ -312,6 +315,16 @@
     return hint.name || '';
   }
 
+  function buildDetectedName(name, source, confidence) {
+    const clean = cleanName(name);
+    if (!clean) return null;
+    return {
+      name: clean,
+      source,
+      confidence
+    };
+  }
+
   function guessNameFromVideo(video) {
     try {
       const tile = video.closest(
@@ -319,31 +332,32 @@
       ) || video.parentElement || video;
 
       for (const attr of ['data-participant-name', 'data-self-name']) {
-        const n = cleanName(tile.getAttribute(attr));
-        if (n) return n;
+        const detected = buildDetectedName(tile.getAttribute(attr), 'data-attribute', 'high');
+        if (detected) return detected;
       }
 
       const nodes = tile.querySelectorAll('[data-participant-name],[data-self-name],span,div');
       for (const node of nodes) {
         for (const attr of ['data-participant-name', 'data-self-name']) {
-          const n = cleanName(node.getAttribute(attr));
-          if (n) return n;
+          const detected = buildDetectedName(node.getAttribute(attr), 'data-attribute', 'high');
+          if (detected) return detected;
         }
-      }
-
-      // aria-label fallback
-      for (const node of nodes) {
-        const n = cleanName(node.getAttribute('aria-label'));
-        if (n) return n;
       }
 
       // Text only from leaf nodes — container textContent concatenates all
       // children without spaces, producing "DucchuyDucchuy" style artifacts
       for (const node of nodes) {
         if (node.children.length === 0) {
-          const n = cleanName(node.textContent);
-          if (n) return n;
+          const detected = buildDetectedName(node.textContent, 'leaf-text', 'medium');
+          if (detected) return detected;
         }
+      }
+
+      // aria-label fallback is intentionally last and low-confidence because
+      // Meet often uses action labels such as "More options for ...".
+      for (const node of nodes) {
+        const detected = buildDetectedName(node.getAttribute('aria-label'), 'aria-label', 'low');
+        if (detected) return detected;
       }
     } catch (e) {
       console.error('[Hook] guessNameFromVideo error:', e);
@@ -379,15 +393,22 @@
             rememberManualVideoHint(video, manualInheritedName);
           }
 
-          const name = manualInheritedName || guessNameFromVideo(video) || getManualVideoHint(video);
-          if (!name) continue;
+          const detectedName = manualInheritedName
+            ? { name: manualInheritedName, source: 'manual', confidence: 'high' }
+            : guessNameFromVideo(video) || (getManualVideoHint(video) ? { name: getManualVideoHint(video), source: 'manual', confidence: 'high' } : null);
+          if (!detectedName?.name) continue;
 
           for (const sid of matchedStreamIds) {
             if (manuallyNamed.has(sid)) continue;
-            if (participantNames.get(sid) !== name) {
-              participantNames.set(sid, name);
-              sendMessage('participant-name-detected', { streamId: sid, name });
-              console.log('[Hook] Detected name from DOM:', sid, '->', name);
+            if (participantNames.get(sid) !== detectedName.name) {
+              participantNames.set(sid, detectedName.name);
+              sendMessage('participant-name-detected', {
+                streamId: sid,
+                name: detectedName.name,
+                source: detectedName.source,
+                confidence: detectedName.confidence
+              });
+              console.log('[Hook] Detected name from DOM:', sid, '->', detectedName.name, detectedName.source);
             }
           }
         } catch (e) {

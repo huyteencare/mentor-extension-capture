@@ -30,6 +30,7 @@
     session.sessionId = buildSessionId(tabId);
     session.events = [];
     session.participantNames = new Map();
+    session.participantNameMeta = new Map();
     session.manuallyNamed = new Set();
     session.streamRecords = new Map();
     session.ownerRecords = new Map();
@@ -61,6 +62,7 @@
       mentorLabel: context.savedMentorLabel || '',
       capturedParticipants: [],
       participantNames: new Map(),
+      participantNameMeta: new Map(),
       manuallyNamed: new Set(),
       streamRecords: new Map(),
       ownerRecords: new Map(),
