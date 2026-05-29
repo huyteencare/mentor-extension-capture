@@ -24,6 +24,9 @@
   }
 
   function resetSessionState(session, tabId) {
+    if (session.tagJoin?.pollTimer) {
+      clearTimeout(session.tagJoin.pollTimer);
+    }
     session.sessionId = buildSessionId(tabId);
     session.events = [];
     session.participantNames = new Map();
@@ -31,9 +34,13 @@
     session.streamRecords = new Map();
     session.ownerRecords = new Map();
     session.streamToOwner = new Map();
+    session.replacementWindows = new Map();
     session.ownerCounter = 0;
     session.attendanceCandidates = new Map();
-    session.tagJoin = { lastResetAt: Date.now(), savedCount: 0, lastPeerCreatedAt: 0 };
+    session.emittedAttendanceFingerprints = new Set();
+    session.ignoredReplacementFingerprints = new Set();
+    session.identityProbeDebug = new Map();
+    session.tagJoin = { lastResetAt: Date.now(), savedCount: 0, lastPeerCreatedAt: 0, pollTimer: null, pollUntilAt: 0 };
     session.toast = { shown: false, suppressed: false };
     session.trackStats = {
       remoteAudioTracks: new Set(),
@@ -58,12 +65,18 @@
       streamRecords: new Map(),
       ownerRecords: new Map(),
       streamToOwner: new Map(),
+      replacementWindows: new Map(),
       ownerCounter: 0,
       attendanceCandidates: new Map(),
+      emittedAttendanceFingerprints: new Set(),
+      ignoredReplacementFingerprints: new Set(),
+      identityProbeDebug: new Map(),
       tagJoin: {
         lastResetAt: Date.now(),
         savedCount: 0,
-        lastPeerCreatedAt: 0
+        lastPeerCreatedAt: 0,
+        pollTimer: null,
+        pollUntilAt: 0
       },
       toast: {
         shown: false,
@@ -109,7 +122,10 @@
   async function rotateSessionForTab(context, tabId, url) {
     const existing = context.sessions.get(tabId);
     if (existing) {
-      await context.upload.uploadBatch(existing);
+      await context.upload.uploadBatch(context, existing);
+      if (existing.tagJoin?.pollTimer) {
+        clearTimeout(existing.tagJoin.pollTimer);
+      }
       if (existing.uploadTimer) {
         clearTimeout(existing.uploadTimer);
       }

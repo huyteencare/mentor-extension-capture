@@ -2,13 +2,92 @@
   'use strict';
 
   const root = globalThis.MeetCaptureBackground = globalThis.MeetCaptureBackground || {};
+  const identity = root.identityModel;
+
+  function buildManualAttendanceCandidate(session, streamIds, name) {
+    const records = (streamIds || [])
+      .map((streamId) => session.streamRecords.get(streamId))
+      .filter(Boolean);
+    if (records.length === 0) return null;
+
+    const audioRecords = records.filter((record) => record.kind === 'audio');
+    const videoRecords = records.filter((record) => record.kind === 'video');
+    const firstSeenAt = Math.min(...records.map((record) => Number(record.firstSeenAt || Date.now())));
+    const lastSeenAt = Math.max(...records.map((record) => Number(record.lastSeenAt || Date.now())));
+    const candidateJoinKey = identity.buildCandidateJoinKey({
+      firstSeenAt,
+      streamIds: records.map((record) => record.streamId),
+      videoStreamIds: videoRecords.map((record) => record.streamId)
+    });
+
+    return {
+      status: 'manual-save',
+      ready: true,
+      streamIds: records.map((record) => record.streamId),
+      audioStreamIds: audioRecords.map((record) => record.streamId),
+      videoStreamIds: videoRecords.map((record) => record.streamId),
+      audioCount: audioRecords.length,
+      videoCount: videoRecords.length,
+      firstSeenAt,
+      lastSeenAt,
+      stableForMs: Math.max(0, Date.now() - lastSeenAt),
+      videoOnly: audioRecords.length === 0,
+      peerCreatedAfterReset: session.tagJoin.lastPeerCreatedAt >= session.tagJoin.lastResetAt,
+      suggestedName: String(name || '').trim(),
+      displayName: identity.displayNameOrUnknown(name),
+      candidateJoinKey,
+      provisionalParticipantKey: identity.buildProvisionalParticipantKey({
+        suggestedName: name,
+        candidateJoinKey
+      }),
+      hasDistinctSuggestedName: !!String(name || '').trim(),
+      nameWaitExpired: true,
+      timedOut: false,
+      savedCount: session.tagJoin.savedCount
+    };
+  }
+
+  function updateKnownCandidateIdentity(session, candidateId, candidateShape, resolvedName) {
+    if (!candidateId || !resolvedName) return;
+    const existing = session.attendanceCandidates.get(candidateId);
+    if (existing) {
+      session.attendanceCandidates.set(candidateId, {
+        ...existing,
+        participantDisplayName: resolvedName,
+        displayName: resolvedName,
+        provisionalParticipantKey: candidateShape?.provisionalParticipantKey || existing.provisionalParticipantKey || null
+      });
+    }
+    root.probeDebug.upsertIdentityProbeDebug(session, {
+      candidateId,
+      participantDisplayName: resolvedName,
+      provisionalParticipantKey: candidateShape?.provisionalParticipantKey || null,
+      evidence: { streamIds: candidateShape?.streamIds || [] },
+      matchType: 'confident_present'
+    }, {
+      participantDisplayName: resolvedName,
+      provisionalParticipantKey: candidateShape?.provisionalParticipantKey || null,
+      lastProbedAt: new Date().toISOString()
+    });
+  }
 
   function queueEvent(context, tabId, type, payload) {
     const session = context.sessionStore.getSession(context, tabId);
     const now = Date.now();
     if (type === 'chunk' && payload?.streamId) {
+      const chunkSeenAt = Number(payload.chunkEndedAt || payload.chunkStartedAt || now);
+      context.mapping.touchStreamActivity(session, payload.streamId, chunkSeenAt);
       const ownerId = session.streamToOwner.get(payload.streamId);
-      if (ownerId) payload = { ...payload, ownerId };
+      if (ownerId) {
+        const owner = session.ownerRecords.get(ownerId);
+        payload = {
+          ...payload,
+          ownerId,
+          provisionalParticipantKey: owner?.provisionalParticipantKey || null,
+          canonicalIdentityType: owner?.canonicalIdentityType || null,
+          canonicalIdentityValue: owner?.canonicalIdentityValue || null
+        };
+      }
     }
     const event = { type, at: now, payload };
     session.events.push(event);
@@ -24,14 +103,54 @@
         session.participantNames.set(payload.streamId, '');
       }
       context.mapping.registerStream(session, payload.streamId, payload.kind, now, payload.mediaRole, payload.trackSource);
+      context.mapping.touchStreamActivity(session, payload.streamId, now);
       context.mapping.maybeAutoAssignKnownVideoStream(context, session, tabId, payload.streamId);
       if (payload.mediaRole !== 'mentor-audio') {
         context.tagJoin.scheduleToastChecks(context, session, tabId);
       }
     }
 
+    if (type === 'track-replaced' && payload?.streamId) {
+      context.mapping.observeTrackReplacement(session, payload, now);
+      context.tagJoin.scheduleToastChecks(context, session, tabId);
+    }
+
     console.log(`[Meet Capture] Queued event: ${type} (total: ${session.events.length})`);
     context.upload.scheduleUpload(context, session);
+  }
+
+  function findProbeDebugForGroup(session, group) {
+    const streamIds = Array.isArray(group?.allStreamIds) ? group.allStreamIds.map((streamId) => String(streamId)) : [];
+    const name = String(group?.name || '').trim().toLowerCase();
+    const probeEntries = Array.from(session.identityProbeDebug.values());
+    const matches = probeEntries.filter((entry) => {
+      const entryStreamIds = Array.isArray(entry?.streamIds) ? entry.streamIds.map((streamId) => String(streamId)) : [];
+      const streamOverlap = streamIds.some((streamId) => entryStreamIds.includes(streamId));
+      const nameMatch = !!name && String(entry?.participantDisplayName || '').trim().toLowerCase() === name;
+      return streamOverlap || nameMatch;
+    });
+    if (matches.length > 0) {
+      return root.probeDebug.sortProbeDebugEntries(matches)[0];
+    }
+
+    const records = streamIds.map((streamId) => session.streamRecords.get(streamId)).filter(Boolean);
+    const hasVideo = records.some((record) => record.kind === 'video');
+    const hasAudio = records.some((record) => record.kind === 'audio');
+
+    return {
+      candidateId: null,
+      participantDisplayName: group?.name || 'unknown',
+      provisionalParticipantKey: null,
+      canonicalIdentityType: null,
+      canonicalIdentityValue: null,
+      probeStatus: !hasVideo && hasAudio ? 'manual_fallback' : hasVideo ? 'waiting_auto_probe' : 'unknown',
+      participantType: null,
+      signedinUserUser: null,
+      finalVerdict: null,
+      lastProbedAt: null,
+      streamIds,
+      matchType: !hasVideo && hasAudio ? 'audio_only' : hasVideo ? 'video_waiting' : 'unknown'
+    };
   }
 
   function buildParticipantGroups(session, showAll) {
@@ -52,38 +171,126 @@
       }
     }
 
-    return groups;
+    return groups.map((group) => ({
+      ...group,
+      probeDebug: findProbeDebugForGroup(session, group)
+    }));
   }
 
   function handleParticipantNameDetected(context, tabId, payload, sendResponse) {
     const session = context.sessionStore.getSession(context, tabId);
     const { streamId, name } = payload || {};
     if (streamId && name && !session.manuallyNamed.has(streamId)) {
+      context.debugLog.logIdentityDebug(context, 'dom-name-detected', {
+        source: 'background/message-handlers',
+        meetingId: session.meetingId,
+        sessionId: session.sessionId,
+        tabId,
+        participantDisplayName: name,
+        payload: { streamId }
+      });
       session.participantNames.set(streamId, name);
       const record = session.streamRecords.get(streamId);
       const existingAssigned = context.mapping.findAssignedByDomName(session, name);
+      if (existingAssigned) {
+        context.debugLog.logIdentityDebug(context, 'existing-owner-match', {
+          source: 'background/message-handlers',
+          meetingId: session.meetingId,
+          sessionId: session.sessionId,
+          tabId,
+          participantDisplayName: name,
+          payload: {
+            reason: 'dom-name-detected',
+            streamId,
+            matchedAssignedName: existingAssigned.assignedName || name
+          }
+        });
+      }
       if (record &&
           !record.assignedName &&
           record.kind === 'video' &&
           record.mediaRole === 'student-video') {
+        const manualCandidate = buildManualAttendanceCandidate(session, [streamId], name);
         const resolvedName = existingAssigned?.assignedName || name;
-        context.mapping.assignNameToStreams(context, session, tabId, [streamId], resolvedName);
+        context.mapping.assignNameToStreams(context, session, tabId, [streamId], resolvedName, {
+          domName: name,
+          displayName: resolvedName,
+          provisionalParticipantKey: manualCandidate?.provisionalParticipantKey || null
+        });
         const savedOwner = context.mapping.getOrCreateOwner(session, resolvedName, name);
         if (savedOwner) {
           savedOwner.domName = name;
+        }
+        if (manualCandidate) {
+          context.tagJoin.maybeEmitAttendanceCandidate(context, session, tabId, manualCandidate);
+          const candidateId = context.tagJoin.buildAttendanceCandidateId(session, manualCandidate);
+          context.tagJoin.mergeAttendanceCandidateIdentity(session, candidateId, {
+            participantDisplayName: resolvedName,
+            displayName: resolvedName,
+            provisionalParticipantKey: manualCandidate.provisionalParticipantKey
+          });
+          updateKnownCandidateIdentity(session, candidateId, manualCandidate, resolvedName);
+          context.debugLog.logIdentityDebug(context, 'candidate-upgraded-to-named', {
+            source: 'background/message-handlers',
+            meetingId: session.meetingId,
+            sessionId: session.sessionId,
+            tabId,
+            candidateId,
+            provisionalParticipantKey: manualCandidate.provisionalParticipantKey,
+            participantDisplayName: resolvedName,
+            payload: {
+              trigger: 'dom-name-detected',
+              streamIds: manualCandidate.streamIds
+            }
+          });
         }
         session.tagJoin.savedCount += 1;
         session.tagJoin.lastResetAt = Date.now();
         session.toast.shown = false;
         session.toast.suppressed = false;
-        context.tagJoin.maybeEmitAttendanceCandidate(
-          context,
-          session,
-          tabId,
-          context.tagJoin.getTagJoinCandidate(context, session)
-        );
       }
+      context.tagJoin.scheduleToastChecks(context, session, tabId);
     }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  function syncProbeResults(context, tabId, request, sendResponse) {
+    const session = context.sessionStore.getSession(context, tabId);
+    const results = Array.isArray(request.results) ? request.results : [];
+    results.forEach((entry) => {
+      const candidateId = String(entry?.candidateId || '').trim();
+      if (!candidateId) return;
+      const currentCandidate = session.attendanceCandidates.get(candidateId);
+      const attendanceCandidate = currentCandidate || {
+        candidateId,
+        participantDisplayName: String(entry?.participantDisplayName || '').trim() || 'unknown',
+        provisionalParticipantKey: entry?.provisionalParticipantKey || null,
+        evidence: { streamIds: Array.isArray(entry?.streamIds) ? entry.streamIds : [] },
+        matchType: 'mismatch_review'
+      };
+      const nextDebug = root.probeDebug.upsertIdentityProbeDebug(session, attendanceCandidate, entry);
+      if (nextDebug?.canonicalIdentityType && nextDebug?.canonicalIdentityValue) {
+        const owner = context.mapping.bindCanonicalIdentityFromProbeEntry(session, nextDebug);
+        if (owner) {
+          context.debugLog.logIdentityDebug(context, 'owner-canonical-identity-bound', {
+            source: 'background/message-handlers',
+            meetingId: session.meetingId,
+            sessionId: session.sessionId,
+            tabId,
+            candidateId,
+            provisionalParticipantKey: nextDebug.provisionalParticipantKey || null,
+            participantDisplayName: owner.displayName || owner.name || nextDebug.participantDisplayName,
+            canonicalIdentityType: owner.canonicalIdentityType || null,
+            canonicalIdentityValue: owner.canonicalIdentityValue || null,
+            payload: {
+              ownerId: owner.ownerId,
+              streamIds: owner.streamIds || []
+            }
+          });
+        }
+      }
+    });
     sendResponse({ ok: true });
     return true;
   }
@@ -100,7 +307,7 @@
 
       if (request.type === 'chunk' || request.type === 'error' ||
           request.type === 'recorder-started' || request.type === 'track-captured' ||
-          request.type === 'peer-created' || request.type === 'hook-installed' ||
+          request.type === 'track-replaced' || request.type === 'peer-created' || request.type === 'hook-installed' ||
           request.type === 'remote-track' || request.type === 'local-track') {
         queueEvent(context, tabId, request.type, request.payload);
         sendResponse({ ok: true });
@@ -111,6 +318,10 @@
         return handleParticipantNameDetected(context, tabId, request.payload, sendResponse);
       }
 
+      if (request.type === 'sync-probe-results') {
+        return syncProbeResults(context, tabId, request, sendResponse);
+      }
+
       if (request.type === 'get-session-state') {
         const session = context.sessionStore.getSession(context, tabId);
         const showAll = request.showAll || false;
@@ -119,6 +330,7 @@
           meetingId: session.meetingId,
           mentorLabel: session.mentorLabel,
           participantNames: buildParticipantGroups(session, showAll),
+          probeDebugEntries: root.probeDebug.sortProbeDebugEntries(Array.from(session.identityProbeDebug.values())),
           tagJoin: context.tagJoin.getTagJoinCandidate(context, session),
           eventCount: session.events.length,
           uploadedSize: 0,
@@ -140,7 +352,34 @@
       if (request.type === 'set-participant-name') {
         const session = context.sessionStore.getSession(context, tabId);
         const streamIds = request.streamIds || [request.streamId];
-        context.mapping.assignNameToStreams(context, session, tabId, streamIds, request.name);
+        const manualCandidate = buildManualAttendanceCandidate(session, streamIds, request.name);
+        context.mapping.assignNameToStreams(context, session, tabId, streamIds, request.name, {
+          displayName: request.name,
+          provisionalParticipantKey: manualCandidate?.provisionalParticipantKey || null
+        });
+        if (manualCandidate) {
+          context.tagJoin.maybeEmitAttendanceCandidate(context, session, tabId, manualCandidate);
+          const candidateId = context.tagJoin.buildAttendanceCandidateId(session, manualCandidate);
+          context.tagJoin.mergeAttendanceCandidateIdentity(session, candidateId, {
+            participantDisplayName: request.name,
+            displayName: request.name,
+            provisionalParticipantKey: manualCandidate.provisionalParticipantKey
+          });
+          updateKnownCandidateIdentity(session, candidateId, manualCandidate, request.name);
+          context.debugLog.logIdentityDebug(context, 'candidate-upgraded-to-named', {
+            source: 'background/message-handlers',
+            meetingId: session.meetingId,
+            sessionId: session.sessionId,
+            tabId,
+            candidateId,
+            provisionalParticipantKey: manualCandidate.provisionalParticipantKey,
+            participantDisplayName: request.name,
+            payload: {
+              trigger: 'set-participant-name',
+              streamIds: manualCandidate.streamIds
+            }
+          });
+        }
         sendResponse({ ok: true });
         return true;
       }
@@ -157,7 +396,37 @@
           sendResponse({ ok: false, error: 'candidate-not-ready', candidate });
           return true;
         }
-        context.mapping.assignNameToStreams(context, session, tabId, candidate.streamIds, name);
+        context.mapping.assignNameToStreams(context, session, tabId, candidate.streamIds, name, {
+          displayName: name,
+          provisionalParticipantKey: candidate.provisionalParticipantKey || null
+        });
+        const namedCandidate = {
+          ...candidate,
+          ready: true,
+          suggestedName: name,
+          displayName: name
+        };
+        context.tagJoin.maybeEmitAttendanceCandidate(context, session, tabId, namedCandidate);
+        const candidateId = context.tagJoin.buildAttendanceCandidateId(session, namedCandidate);
+        context.tagJoin.mergeAttendanceCandidateIdentity(session, candidateId, {
+          participantDisplayName: name,
+          displayName: name,
+          provisionalParticipantKey: namedCandidate.provisionalParticipantKey || null
+        });
+        updateKnownCandidateIdentity(session, candidateId, namedCandidate, name);
+        context.debugLog.logIdentityDebug(context, 'candidate-upgraded-to-named', {
+          source: 'background/message-handlers',
+          meetingId: session.meetingId,
+          sessionId: session.sessionId,
+          tabId,
+          candidateId,
+          provisionalParticipantKey: namedCandidate.provisionalParticipantKey || null,
+          participantDisplayName: name,
+          payload: {
+            trigger: 'tag-join-save',
+            streamIds: namedCandidate.streamIds
+          }
+        });
         const savedOwner = context.mapping.getOrCreateOwner(session, name);
         if (savedOwner && candidate.suggestedName) {
           savedOwner.domName = candidate.suggestedName;

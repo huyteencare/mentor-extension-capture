@@ -93,12 +93,19 @@
           const record = session.streamRecords.get(id);
           return name && (!!record?.assignedName || session.manuallyNamed.has(id));
         })
-        .map(([id, name]) => ({
-          participantKey: id,
-          participantName: name,
-          mappingConfidence: 'high',
-          labelSource: 'manual'
-        })),
+        .map(([id, name]) => {
+          const owner = context.mapping.getOwnerByStreamId(session, id);
+          return {
+            participantKey: id,
+            participantName: name,
+            mappingConfidence: 'high',
+            labelSource: 'manual',
+            displayName: owner?.displayName || name,
+            provisionalParticipantKey: owner?.provisionalParticipantKey || null,
+            canonicalIdentityType: owner?.canonicalIdentityType || null,
+            canonicalIdentityValue: owner?.canonicalIdentityValue || null
+          };
+        }),
       manualParticipantOverrides: {},
       trackStats: {
         remoteAudioTracks: session.trackStats.remoteAudioTracks.size,

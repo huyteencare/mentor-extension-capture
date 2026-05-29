@@ -153,7 +153,8 @@ label.show-all-label.dev-only {
 }
 
 .student-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 8px;
@@ -287,6 +288,39 @@ label.show-all-label.dev-only {
 .save-btn:disabled {
   cursor: not-allowed;
   background: #c9c9c9;
+}
+
+.probe-debug {
+  grid-column: 1 / -1;
+  display: none;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed #e6e6e6;
+  font-size: 11px;
+  color: #666;
+}
+
+body.dev-mode .probe-debug {
+  display: grid;
+}
+
+.probe-debug-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.probe-debug-label {
+  color: #888;
+  min-width: 68px;
+}
+
+.probe-debug-value {
+  font-family: monospace;
+  color: #333;
+  word-break: break-all;
 }
 
 .stats {

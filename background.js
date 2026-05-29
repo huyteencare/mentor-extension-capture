@@ -1,6 +1,9 @@
 importScripts(
   'config.js',
   'background/session-store.js',
+  'background/identity-model.js',
+  'background/probe-debug.js',
+  'background/debug-log.js',
   'background/participant-mapping.js',
   'background/tag-join.js',
   'background/upload.js',
@@ -11,23 +14,39 @@ importScripts(
   'use strict';
 
   const modules = globalThis.MeetCaptureBackground || {};
+  const debugLogsEnabled = modules.debugLog?.isLocalApiUrl(`${API_BASE_URL}/api/capture/batch`) || false;
   const context = {
     constants: {
       API_URL: `${API_BASE_URL}/api/capture/batch`,
       PRESIGN_URL: `${API_BASE_URL}/api/capture/presign`,
+      DEBUG_IDENTITY_LOGS_ENABLED: debugLogsEnabled,
+      DEBUG_IDENTITY_LOG_URL: debugLogsEnabled ? modules.debugLog.buildDebugLogUrl(`${API_BASE_URL}/api/capture/batch`) : '',
       UPLOAD_INTERVAL_MS: 8000,
       TAG_JOIN_SETTLE_MS: 1500,
+      TAG_JOIN_NAME_WAIT_MS: 3500,
       TAG_JOIN_VIDEO_ONLY_MS: 5000,
-      TAG_JOIN_TIMEOUT_MS: 30000
+      TAG_JOIN_TIMEOUT_MS: 30000,
+      TAG_JOIN_POLL_INTERVAL_MS: 500,
+      TAG_JOIN_POLL_WINDOW_MS: 10000,
+      REPLACEMENT_CONTINUITY_WINDOW_MS: 30000
     },
     sessions: new Map(),
     savedMentorLabel: '',
     sessionStore: modules.sessionStore,
+    identity: modules.identityModel,
+    probeDebug: modules.probeDebug,
+    debugLog: modules.debugLog,
     mapping: modules.participantMapping,
     tagJoin: modules.tagJoin,
     upload: modules.upload,
     messages: modules.messages
   };
+
+  console.log('[Meet Capture] Background boot', {
+    version: 'attendance-probe-debug-v1',
+    apiUrl: context.constants.API_URL,
+    presignUrl: context.constants.PRESIGN_URL
+  });
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => (
     context.messages.handleMessage(context, request, sender, sendResponse)
@@ -36,6 +55,9 @@ importScripts(
   chrome.tabs.onRemoved.addListener((tabId) => {
     const session = context.sessions.get(tabId);
     if (session) {
+      if (session.tagJoin?.pollTimer) {
+        clearTimeout(session.tagJoin.pollTimer);
+      }
       if (session.uploadTimer) {
         clearTimeout(session.uploadTimer);
       }

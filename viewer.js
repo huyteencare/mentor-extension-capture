@@ -48,10 +48,13 @@
         return;
       }
 
+      const selectedId = currentSession?.sessionId || null;
+
       sessionList.innerHTML = sessions.map((session) => {
         const isV2 = session.sessionId.startsWith('session-');
+        const isSelected = session.sessionId === selectedId;
         return `
-          <div class="session-item${isV2 ? '' : ' legacy'}" data-session-id="${escapeHtml(session.sessionId)}">
+          <div class="session-item${isV2 ? '' : ' legacy'}${isSelected ? ' active' : ''}" data-session-id="${escapeHtml(session.sessionId)}">
             <div class="session-name">${escapeHtml(session.meetingId)}${isV2 ? '' : ' <span class="legacy-tag">v1</span>'}</div>
             <div class="session-meta">${escapeHtml(session.mentorLabel || 'No mentor label')} &bull; ${session.eventCount} events</div>
             <div class="session-time">${new Date(session.updatedAt).toLocaleDateString()}</div>
@@ -627,5 +630,5 @@
   }
 
   loadSessions();
-  setInterval(loadSessions, 5000);
+  setInterval(loadSessions, 30000);
 })();

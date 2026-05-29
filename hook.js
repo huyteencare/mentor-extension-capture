@@ -131,6 +131,15 @@
 
       if (previousTrackId && previousTrackId !== track.id) {
         console.log('[Hook] track replaced', { streamId, kind, previousTrackId, nextTrackId: track.id });
+        sendMessage('track-replaced', {
+          streamId,
+          kind,
+          previousTrackId,
+          nextTrackId: track.id,
+          mediaRole: options.mediaRole || (kind === 'video' ? 'student-video' : 'shared-audio'),
+          trackSource: options.trackSource || 'remote',
+          participantId: options.participantId || streamId
+        });
         stopRecorder(streamId, kind);
       }
 
