@@ -5,7 +5,10 @@ cd "$(dirname "$0")"
 mkdir -p dist
 
 python3 - <<'EOF'
-import zipfile, os
+import zipfile, os, json
+
+with open('manifest.json') as f:
+    version = json.load(f)['version']
 
 files = [
     'manifest.json', 'config.js',
@@ -22,7 +25,7 @@ files = [
     'viewer.html', 'viewer.js', 'viewer.css',
 ]
 
-out = 'dist/meet-capture-mentor.zip'
+out = f'dist/meet-capture-mentor-v{version}.zip'
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
     for f in files:
         z.write(f)
