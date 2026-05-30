@@ -88,6 +88,30 @@ body {
   background-color: #f1f8f5;
 }
 
+.mentor-email-row {
+  display: flex;
+  gap: 6px;
+}
+
+.mentor-email-row input {
+  flex: 1;
+}
+
+.mentor-checkin-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  border-radius: 4px;
+  background: #fbbc04;
+  color: #000;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mentor-checkin-btn:disabled { background: #dadce0; color: #9aa0a6; cursor: default; }
+.mentor-checkin-btn.is-checked-in { background: #34a853; color: #fff; cursor: default; }
+
 .meeting-id {
   padding: 8px 10px;
   background: #f0f0f0;
@@ -459,3 +483,21 @@ body.dev-mode label.show-all-label.dev-only {
   padding: 1px 5px;
   letter-spacing: 0.5px;
 }
+
+.checkin-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  border-radius: 4px;
+  background: #fbbc04;
+  color: #000;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.checkin-btn:hover { background: #f9a825; }
+.checkin-btn:disabled { background: #dadce0; color: #9aa0a6; cursor: default; }
+.checkin-btn.is-checked-in { background: #34a853; color: #fff; cursor: default; }
+.checkin-btn.is-checked-in:hover { background: #34a853; }
+.checkin-btn.is-failed { background: #ea4335; color: #fff; }
+.checkin-btn.is-failed:hover { background: #d33828; }

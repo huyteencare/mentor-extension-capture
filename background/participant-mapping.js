@@ -50,15 +50,25 @@
 
   function ensureParticipantStorageKey(record, owner, preferredDisplayName) {
     if (!record) return '';
-    if (record.participantStorageKey) return record.participantStorageKey;
-    const displayName = String(preferredDisplayName || owner?.displayName || owner?.name || record.assignedName || '').trim();
-    const storageKey = identity.buildParticipantStorageKey({
-      displayName,
-      canonicalIdentityValue: owner?.canonicalIdentityValue || null,
-      streamId: record.streamId
-    });
-    if (storageKey) {
-      record.participantStorageKey = storageKey;
+    if (owner) {
+      if (!owner.participantStorageKey) {
+        const displayName = String(preferredDisplayName || owner.displayName || owner.name || record.assignedName || '').trim();
+        const ownerStorageKey = identity.buildParticipantStorageKey({
+          displayName,
+          canonicalIdentityValue: owner.canonicalIdentityValue || null,
+          streamId: record.streamId
+        });
+        if (ownerStorageKey) {
+          owner.participantStorageKey = ownerStorageKey;
+        }
+      }
+      if (owner.participantStorageKey) {
+        record.participantStorageKey = owner.participantStorageKey;
+        return record.participantStorageKey;
+      }
+    }
+    if (record.participantStorageKey) {
+      return record.participantStorageKey;
     }
     return record.participantStorageKey || '';
   }
@@ -118,6 +128,7 @@
       name,
       domName: domName || name,
       displayName: options.displayName || domName || name,
+      participantStorageKey: options.participantStorageKey || '',
       provisionalParticipantKey: options.provisionalParticipantKey || null,
       canonicalIdentityType: options.canonicalIdentityType || null,
       canonicalIdentityValue: options.canonicalIdentityValue || null,
@@ -135,6 +146,7 @@
       if (identity.normalizeName(owner.name) === target) {
         if (domName) owner.domName = domName;
         if (options.displayName) owner.displayName = options.displayName;
+        if (options.participantStorageKey && !owner.participantStorageKey) owner.participantStorageKey = options.participantStorageKey;
         if (options.provisionalParticipantKey) owner.provisionalParticipantKey = options.provisionalParticipantKey;
         if (options.canonicalIdentityType) owner.canonicalIdentityType = options.canonicalIdentityType;
         if (options.canonicalIdentityValue) owner.canonicalIdentityValue = options.canonicalIdentityValue;

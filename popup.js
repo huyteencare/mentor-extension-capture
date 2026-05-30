@@ -2,6 +2,7 @@
   'use strict';
 
   const mentorNameInput = document.getElementById('mentorName');
+  const mentorCheckinBtn = document.getElementById('mentorCheckinBtn');
   const meetingIdDiv = document.getElementById('meetingId');
   const studentCountSpan = document.getElementById('studentCount');
   const studentList = document.getElementById('studentList');
@@ -51,9 +52,74 @@
     });
   }
 
-  function saveEmailMapping(signedinUserUser, studentEmail, displayName) {
-    emailMappings[signedinUserUser] = { studentEmail, displayName, signedinUserUser, linkedAt: new Date().toISOString() };
-    chrome.storage.local.set({ emailMappings });
+  async function saveEmailMapping(signedinUserUser, studentEmail, displayName, role = 'student') {
+    emailMappings[signedinUserUser] = { studentEmail, displayName, signedinUserUser, role, linkedAt: new Date().toISOString() };
+    const linkedBy = mentorNameInput.value.trim() || undefined;
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/link-student`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ googleHandle: signedinUserUser, studentEmail, displayName, role, linkedBy })
+      });
+      const result = await resp.json().catch(() => ({}));
+      if (!result.ok) {
+        console.error('[saveEmailMapping] failed:', result);
+        showToast('Failed to save email mapping');
+      }
+    } catch (err) {
+      console.error('[saveEmailMapping] fetch error:', err);
+      showToast('Failed to save email mapping');
+    }
+  }
+
+  // In-memory: handles already attempted this session — prevents 2s retry spam
+  const checkinAttempted = new Set();
+  const handlesFetched = new Set();
+  // Persisted across popup open/close: "handle:meetCode" → prevents duplicate API calls
+  let checkedInKeys = new Set();
+
+  async function fetchHandleMapping(googleHandle) {
+    if (handlesFetched.has(googleHandle)) return;
+    handlesFetched.add(googleHandle);
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/student-by-handle/${encodeURIComponent(googleHandle)}`);
+      const data = await resp.json().catch(() => ({}));
+      if (data.found) {
+        emailMappings[googleHandle] = {
+          ...emailMappings[googleHandle],
+          studentEmail: data.studentEmail,
+          displayName: data.displayName,
+          role: data.role || 'student',
+        };
+      }
+    } catch {}
+  }
+
+  async function tryAutoCheckin(googleHandle, meetCode) {
+    if (!googleHandle || !meetCode) return;
+    const key = `${googleHandle}:${meetCode}`;
+    if (checkedInKeys.has(key)) return;
+    if (checkinAttempted.has(googleHandle)) return;
+    checkinAttempted.add(googleHandle);
+
+    const body = { googleHandle, meetCode, joinTime: new Date().toISOString() };
+    const resp = await fetch(`${API_BASE_URL}/api/auto-checkin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).catch(() => null);
+
+    const result = await resp?.json().catch(() => ({ ok: false })) ?? { ok: false };
+
+    if (result.ok) {
+      checkedInKeys.add(key);
+      chrome.storage.local.set({ checkedInKeys: [...checkedInKeys] });
+      emailMappings[googleHandle] = { ...emailMappings[googleHandle], checkinStatus: 'checked_in' };
+      setTimeout(updateUI, 50);
+    } else if (result.status === 'failed' || result.status === 'handle_not_linked') {
+      checkinAttempted.delete(googleHandle);
+    }
+    // session_not_found: stays in attempted — no retry until popup reopens
   }
 
   function escapeHtml(value) {
@@ -68,6 +134,20 @@
 
   function isDevMode() {
     return document.body.classList.contains('dev-mode');
+  }
+
+  function showToast(message, type = 'error') {
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    toast.style.cssText = `
+      position: fixed; bottom: 12px; left: 12px; right: 12px;
+      padding: 8px 12px; border-radius: 4px; font-size: 12px;
+      background: ${type === 'error' ? '#ea4335' : '#34a853'}; color: #fff;
+      z-index: 9999; text-align: center;
+      animation: fadeIn 0.15s ease;
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
   }
 
   async function fetchBackendProbeResults(sessionId) {
@@ -144,12 +224,15 @@
     const existing = emailMappings[signedinUserUser];
     const currentEmail = existing?.studentEmail || '';
     const isLinked = !!currentEmail;
+    const checkinStatus = emailMappings[signedinUserUser]?.checkinStatus || 'idle';
+    const role = mergedProbeDebug?.participantType === 'mentor' ? 'mentor' : 'student';
     return `
-      <div class="email-row${isLinked ? ' linked' : ''}" data-signin-user="${escapeHtml(signedinUserUser)}">
+      <div class="email-row${isLinked ? ' linked' : ''}" data-signin-user="${escapeHtml(signedinUserUser)}" data-role="${escapeHtml(role)}">
         <input type="email" class="email-input" placeholder="student@email.com" value="${escapeHtml(currentEmail)}">
         <button class="email-link-btn${isLinked ? ' is-linked' : ''}" ${!currentEmail ? 'disabled' : ''}>
           ${isLinked ? '&#10003;' : 'Link'}
         </button>
+        ${isLinked ? `<button class="checkin-btn${checkinStatus === 'checked_in' ? ' is-checked-in' : checkinStatus === 'failed' ? ' is-failed' : ''}" data-signin-user="${escapeHtml(signedinUserUser)}">${checkinStatus === 'checked_in' ? '&#10003; In' : 'Check In'}</button>` : ''}
       </div>
     `;
   }
@@ -209,16 +292,32 @@
         emailRow.classList.remove('linked');
       });
 
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const email = input.value.trim();
         if (!email) return;
         const displayName = emailRow.closest('.student-item')?.querySelector('.student-name')?.value || '';
-        saveEmailMapping(signedinUserUser, email, displayName);
+        const role = emailRow.dataset.role || 'student';
+        btn.disabled = true;
+        await saveEmailMapping(signedinUserUser, email, displayName, role);
         btn.classList.add('is-linked');
         btn.innerHTML = '&#10003;';
+        btn.disabled = false;
         emailRow.classList.add('linked');
         input.classList.add('saved');
         setTimeout(() => input.classList.remove('saved'), 1500);
+        checkinAttempted.delete(signedinUserUser);
+        tryAutoCheckin(signedinUserUser, response?.meetingId || '');
+      });
+    });
+
+    const meetCode = response?.meetingId || '';
+    studentList.querySelectorAll('.checkin-btn').forEach((checkinBtn) => {
+      const suHandle = checkinBtn.dataset.signinUser;
+      checkinBtn.addEventListener('click', async () => {
+        checkinBtn.disabled = true;
+        checkinBtn.textContent = '...';
+        await tryAutoCheckin(suHandle, meetCode);
+        // tryAutoCheckin updates emailMappings + triggers updateUI
       });
     });
   }
@@ -241,6 +340,13 @@
 
     studentList.innerHTML = html || '<div class="placeholder">Waiting for participants...</div>';
     bindStudentActions(response);
+
+    participants.forEach((group) => {
+      const signedinUserUser = group?.probeDebug?.signedinUserUser;
+      if (!signedinUserUser || signedinUserUser === '-') return;
+      fetchHandleMapping(signedinUserUser); // populate email from DB (fire-and-forget, next render cycle picks it up)
+      tryAutoCheckin(signedinUserUser, response?.meetingId || '');
+    });
   }
 
   function updateUI() {
@@ -253,9 +359,11 @@
 
         if (response.mentorLabel && !mentorNameInput.value) {
           mentorNameInput.value = response.mentorLabel;
+          mentorCheckinBtn.disabled = false;
         }
 
-        meetingIdDiv.textContent = response.meetingId || '-';
+        const meetCode = response.meetingId || '-';
+        meetingIdDiv.textContent = meetCode;
         eventCountDiv.textContent = response.eventCount || 0;
         queueSizeDiv.textContent = response.queueSize || 0;
 
@@ -263,16 +371,19 @@
         const queueEmpty = (response.queueSize || 0) === 0;
         clearSessionBtn.disabled = !(hasEvents && queueEmpty);
 
+        tryMentorAutoCheckin(mentorNameInput.value.trim(), meetCode);
+
         const backendProbeResults = await fetchBackendProbeResults(response.sessionId);
         renderStudents(response, backendProbeResults);
       });
     });
   }
 
-  // Load saved mentor name and email mappings on startup
-  chrome.storage.local.get(['mentorLabel', 'emailMappings'], (data) => {
-    if (data?.mentorLabel) mentorNameInput.value = data.mentorLabel;
-    if (data?.emailMappings) emailMappings = data.emailMappings;
+  // Load persisted state then start polling — ensures checkedInKeys is ready before first updateUI
+  chrome.storage.local.get(['mentorLabel', 'checkedInKeys'], (data) => {
+    if (data?.mentorLabel) { mentorNameInput.value = data.mentorLabel; mentorCheckinBtn.disabled = false; }
+    if (data?.checkedInKeys) checkedInKeys = new Set(data.checkedInKeys);
+    startPolling();
   });
 
   function saveMentorName() {
@@ -287,6 +398,52 @@
   mentorNameInput.addEventListener('blur', saveMentorName);
   mentorNameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); saveMentorName(); }
+  });
+
+  let mentorCheckinAttempted = false;
+
+  async function tryMentorAutoCheckin(email, meetCode) {
+    if (!email || !meetCode || meetCode === '-') return;
+    const key = `mentor:${email}:${meetCode}`;
+    if (checkedInKeys.has(key)) {
+      mentorCheckinBtn.textContent = '✓ In';
+      mentorCheckinBtn.classList.add('is-checked-in');
+      return;
+    }
+    if (mentorCheckinAttempted) return;
+    mentorCheckinAttempted = true;
+
+    mentorCheckinBtn.disabled = true;
+    mentorCheckinBtn.textContent = '...';
+
+    const resp = await fetch(`${API_BASE_URL}/api/checkin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ meetCode, participantEmail: email, participantType: 'mentor', joinTime: new Date().toISOString() })
+    }).catch(() => null);
+
+    const result = await resp?.json().catch(() => ({ ok: false })) ?? { ok: false };
+    if (result.ok) {
+      checkedInKeys.add(key);
+      chrome.storage.local.set({ checkedInKeys: [...checkedInKeys] });
+      mentorCheckinBtn.textContent = '✓ In';
+      mentorCheckinBtn.classList.add('is-checked-in');
+    } else {
+      mentorCheckinBtn.textContent = 'Check In';
+      mentorCheckinBtn.disabled = false;
+      mentorCheckinAttempted = false;
+    }
+  }
+
+  mentorNameInput.addEventListener('input', () => {
+    const hasEmail = !!mentorNameInput.value.trim();
+    mentorCheckinBtn.disabled = !hasEmail;
+    mentorCheckinAttempted = false; // reset so new email can checkin
+  });
+
+  mentorCheckinBtn.addEventListener('click', () => {
+    mentorCheckinAttempted = false; // allow manual retry
+    tryMentorAutoCheckin(mentorNameInput.value.trim(), meetingIdDiv.textContent?.trim());
   });
 
   showAllStreamsCheckbox.addEventListener('change', () => {
@@ -313,13 +470,14 @@
     });
   });
 
-  // Poll for updates; start fast then slow down once meeting ID resolves
-  let pollInterval = setInterval(() => {
+  function startPolling() {
     updateUI();
-    if (meetingIdDiv.textContent !== '-' && meetingIdDiv.textContent !== 'unknown') {
-      clearInterval(pollInterval);
-      setInterval(updateUI, 2000);
-    }
-  }, 500);
-  updateUI();
+    let pollInterval = setInterval(() => {
+      updateUI();
+      if (meetingIdDiv.textContent !== '-' && meetingIdDiv.textContent !== 'unknown') {
+        clearInterval(pollInterval);
+        setInterval(updateUI, 2000);
+      }
+    }, 500);
+  }
 })();
