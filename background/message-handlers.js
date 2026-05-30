@@ -78,13 +78,14 @@
     const now = Date.now();
     if (type === 'chunk' && payload?.streamId) {
       const chunkSeenAt = Number(payload.chunkEndedAt || payload.chunkStartedAt || now);
-      context.mapping.touchStreamActivity(session, payload.streamId, chunkSeenAt);
+      const record = context.mapping.touchStreamActivity(session, payload.streamId, chunkSeenAt);
       const ownerId = session.streamToOwner.get(payload.streamId);
       if (ownerId) {
         const owner = session.ownerRecords.get(ownerId);
         payload = {
           ...payload,
           ownerId,
+          participantStorageKey: record?.participantStorageKey || null,
           provisionalParticipantKey: owner?.provisionalParticipantKey || null,
           canonicalIdentityType: owner?.canonicalIdentityType || null,
           canonicalIdentityValue: owner?.canonicalIdentityValue || null

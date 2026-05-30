@@ -46,12 +46,54 @@
     return null;
   }
 
+  function slugifyName(name) {
+    const value = String(name || '')
+      .trim()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/-+/g, '-')
+      .slice(0, 48);
+    return value || '';
+  }
+
+  function getCanonicalIdentitySuffix(canonicalIdentityValue) {
+    const value = String(canonicalIdentityValue || '').trim();
+    if (!value) return '';
+    const match = value.match(/(\d+)(?!.*\d)/);
+    return String(match?.[1] || '').slice(0, 12);
+  }
+
+  function getStreamIdSuffix(streamId) {
+    return String(streamId || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 24);
+  }
+
+  function buildParticipantStorageKey({ displayName, canonicalIdentityValue, streamId }) {
+    const slug = slugifyName(displayName);
+    if (!slug) return null;
+    const canonicalSuffix = getCanonicalIdentitySuffix(canonicalIdentityValue);
+    if (canonicalSuffix) return `${slug}__${canonicalSuffix}`;
+    const streamSuffix = getStreamIdSuffix(streamId);
+    if (streamSuffix) return `${slug}__${streamSuffix}`;
+    return slug;
+  }
+
   root.identityModel = {
     normalizeName,
     displayNameOrUnknown,
     buildCandidateJoinKey,
     buildProvisionalParticipantKey,
     buildCanonicalIdentity,
-    canonicalIdentityFromProbeDebug
+    canonicalIdentityFromProbeDebug,
+    slugifyName,
+    getCanonicalIdentitySuffix,
+    getStreamIdSuffix,
+    buildParticipantStorageKey
   };
 })();

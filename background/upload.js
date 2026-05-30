@@ -46,6 +46,7 @@
               eventAt: event.at,
               streamId: event.payload.streamId,
               participantId: event.payload.participantId,
+              participantStorageKey: event.payload.participantStorageKey,
               mediaRole: event.payload.mediaRole,
               kind: event.payload.kind,
               index: event.payload.index,

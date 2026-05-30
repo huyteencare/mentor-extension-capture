@@ -42,9 +42,25 @@
       lastSeenAt: seenAt,
       assignedName: '',
       ownerId: '',
+      participantStorageKey: '',
       replacedAt: 0,
       trackGeneration: 1
     });
+  }
+
+  function ensureParticipantStorageKey(record, owner, preferredDisplayName) {
+    if (!record) return '';
+    if (record.participantStorageKey) return record.participantStorageKey;
+    const displayName = String(preferredDisplayName || owner?.displayName || owner?.name || record.assignedName || '').trim();
+    const storageKey = identity.buildParticipantStorageKey({
+      displayName,
+      canonicalIdentityValue: owner?.canonicalIdentityValue || null,
+      streamId: record.streamId
+    });
+    if (storageKey) {
+      record.participantStorageKey = storageKey;
+    }
+    return record.participantStorageKey || '';
   }
 
   function touchStreamActivity(session, streamId, seenAt) {
@@ -299,6 +315,10 @@
     }
     owner.canonicalIdentityType = type;
     owner.canonicalIdentityValue = value;
+    for (const streamId of owner.streamIds || []) {
+      const record = session.streamRecords.get(streamId);
+      ensureParticipantStorageKey(record, owner, owner.displayName || owner.name);
+    }
     return true;
   }
 
@@ -346,6 +366,7 @@
           owner.recentVideoStreamIds.add(sid);
           owner.lastVideoSeenAt = Math.max(Number(owner.lastVideoSeenAt || 0), Number(record.lastSeenAt || Date.now()));
         }
+        ensureParticipantStorageKey(record, owner, options.displayName || name);
       }
       if (owner && !owner.streamIds.includes(sid)) owner.streamIds.push(sid);
       if (owner) session.streamToOwner.set(sid, owner.ownerId);

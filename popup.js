@@ -39,6 +39,7 @@
 
   let activeTabId = null;
   const backendProbeCache = new Map();
+  let emailMappings = {}; // signedinUserUser → { studentEmail, displayName, signedinUserUser, linkedAt }
 
   function sendToBackground(msg, cb) {
     chrome.runtime.sendMessage({ ...msg, tabId: activeTabId }, (resp) => {
@@ -48,6 +49,11 @@
       }
       if (cb) cb(resp);
     });
+  }
+
+  function saveEmailMapping(signedinUserUser, studentEmail, displayName) {
+    emailMappings[signedinUserUser] = { studentEmail, displayName, signedinUserUser, linkedAt: new Date().toISOString() };
+    chrome.storage.local.set({ emailMappings });
   }
 
   function escapeHtml(value) {
@@ -131,6 +137,23 @@
     `;
   }
 
+  function renderEmailRow(mergedProbeDebug, isDebug) {
+    if (isDebug) return '';
+    const signedinUserUser = mergedProbeDebug?.signedinUserUser;
+    if (!signedinUserUser || signedinUserUser === '-') return '';
+    const existing = emailMappings[signedinUserUser];
+    const currentEmail = existing?.studentEmail || '';
+    const isLinked = !!currentEmail;
+    return `
+      <div class="email-row${isLinked ? ' linked' : ''}" data-signin-user="${escapeHtml(signedinUserUser)}">
+        <input type="email" class="email-input" placeholder="student@email.com" value="${escapeHtml(currentEmail)}">
+        <button class="email-link-btn${isLinked ? ' is-linked' : ''}" ${!currentEmail ? 'disabled' : ''}>
+          ${isLinked ? '&#10003;' : 'Link'}
+        </button>
+      </div>
+    `;
+  }
+
   function renderSavedRow(group, isDebug, backendProbeResults) {
     const streamIds = group.allStreamIds || [group.streamId];
     const mergedProbeDebug = mergeProbeDebug(group, backendProbeResults);
@@ -139,6 +162,7 @@
         <div class="stream-id">${escapeHtml(String(group.streamId || '').substring(0, 6))}</div>
         <input type="text" class="student-name" value="${escapeHtml(group.name || '')}" placeholder="Student name">
         <button class="save-btn manual-save">&#10003;</button>
+        ${renderEmailRow(mergedProbeDebug, isDebug)}
         ${renderProbeDebug(mergedProbeDebug)}
       </div>
     `;
@@ -171,10 +195,37 @@
         });
       }
     });
+
+    studentList.querySelectorAll('.email-row').forEach((emailRow) => {
+      const signedinUserUser = emailRow.dataset.signinUser;
+      if (!signedinUserUser) return;
+      const input = emailRow.querySelector('.email-input');
+      const btn = emailRow.querySelector('.email-link-btn');
+
+      input.addEventListener('input', () => {
+        btn.disabled = !input.value.trim();
+        btn.classList.remove('is-linked');
+        btn.innerHTML = 'Link';
+        emailRow.classList.remove('linked');
+      });
+
+      btn.addEventListener('click', () => {
+        const email = input.value.trim();
+        if (!email) return;
+        const displayName = emailRow.closest('.student-item')?.querySelector('.student-name')?.value || '';
+        saveEmailMapping(signedinUserUser, email, displayName);
+        btn.classList.add('is-linked');
+        btn.innerHTML = '&#10003;';
+        emailRow.classList.add('linked');
+        input.classList.add('saved');
+        setTimeout(() => input.classList.remove('saved'), 1500);
+      });
+    });
   }
 
   function renderStudents(response, backendProbeResults) {
-    if (document.activeElement?.classList?.contains('student-name')) return;
+    const active = document.activeElement;
+    if (active?.classList?.contains('student-name') || active?.classList?.contains('email-input')) return;
 
     const participants = response.participantNames || [];
     const saved = participants.filter(p => p.name);
@@ -218,11 +269,10 @@
     });
   }
 
-  // Load saved mentor name on startup
-  chrome.storage.local.get('mentorLabel', (data) => {
-    if (data && data.mentorLabel) {
-      mentorNameInput.value = data.mentorLabel;
-    }
+  // Load saved mentor name and email mappings on startup
+  chrome.storage.local.get(['mentorLabel', 'emailMappings'], (data) => {
+    if (data?.mentorLabel) mentorNameInput.value = data.mentorLabel;
+    if (data?.emailMappings) emailMappings = data.emailMappings;
   });
 
   function saveMentorName() {
