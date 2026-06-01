@@ -5,6 +5,7 @@
   "description": "Capture audio and video per student in Google Meet calls",
   "permissions": [
     "activeTab",
+    "alarms",
     "scripting",
     "storage",
     "tabs"

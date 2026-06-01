@@ -35,6 +35,11 @@
         sendResponse({ ok: true });
         return true;
       }
+      if (request.type === 'upload-success' && request.shouldSyncProbeResults) {
+        startProbeResultSync();
+        sendResponse({ ok: true });
+        return true;
+      }
     } catch (err) {}
     try { sendResponse({}); } catch (e) {}
   });
@@ -46,9 +51,14 @@
   // ── Tag-join toast ────────────────────────────────────────────────────────
 
   const AUTO_CONFIRM_S = 12;
+  const PROBE_SYNC_INTERVAL_MS = 2000;
+  const PROBE_SYNC_WINDOW_MS = 30000;
   let toastHost = null;
   let autoConfirmTimer = null;
   let countdownInterval = null;
+  let probeSyncTimer = null;
+  let probeSyncUntilAt = 0;
+  let probeSyncInFlight = false;
 
   function esc(str) {
     return String(str || '').replace(/[&<>"']/g, (c) => (
@@ -65,6 +75,44 @@
       toastHost.remove();
       toastHost = null;
     }
+  }
+
+  function stopProbeResultSync() {
+    if (probeSyncTimer) {
+      clearTimeout(probeSyncTimer);
+      probeSyncTimer = null;
+    }
+    probeSyncUntilAt = 0;
+    probeSyncInFlight = false;
+  }
+
+  async function syncProbeResultsOnce() {
+    if (probeSyncInFlight) return;
+    probeSyncInFlight = true;
+    try {
+      chrome.runtime.sendMessage({ type: 'request-probe-sync' }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch (err) {
+    } finally {
+      probeSyncInFlight = false;
+    }
+
+    if (Date.now() >= probeSyncUntilAt) {
+      stopProbeResultSync();
+      return;
+    }
+    probeSyncTimer = setTimeout(syncProbeResultsOnce, PROBE_SYNC_INTERVAL_MS);
+  }
+
+  function startProbeResultSync() {
+    if (probeSyncTimer) {
+      clearTimeout(probeSyncTimer);
+      probeSyncTimer = null;
+    }
+    probeSyncUntilAt = Date.now() + PROBE_SYNC_WINDOW_MS;
+    probeSyncInFlight = false;
+    syncProbeResultsOnce();
   }
 
   function showToast(candidate) {

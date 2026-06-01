@@ -354,7 +354,8 @@
     bindStudentActions(response);
 
     participants.forEach((group) => {
-      const signedinUserUser = group?.probeDebug?.signedinUserUser;
+      const mergedProbeDebug = mergeProbeDebug(group, backendProbeResults);
+      const signedinUserUser = mergedProbeDebug?.signedinUserUser;
       if (!signedinUserUser || signedinUserUser === '-') return;
       fetchHandleMapping(signedinUserUser); // populate email from DB (fire-and-forget, next render cycle picks it up)
       tryAutoCheckin(signedinUserUser, response?.meetingId || '');

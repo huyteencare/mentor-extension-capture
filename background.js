@@ -7,6 +7,7 @@ importScripts(
   'background/participant-mapping.js',
   'background/tag-join.js',
   'background/upload.js',
+  'background/probe-sync.js',
   'background/message-handlers.js'
 );
 
@@ -19,9 +20,12 @@ importScripts(
     constants: {
       API_URL: `${API_BASE_URL}/api/capture/batch`,
       PRESIGN_URL: `${API_BASE_URL}/api/capture/presign`,
+      SESSION_DETAIL_URL_BASE: `${API_BASE_URL}/api/sessions`,
       DEBUG_IDENTITY_LOGS_ENABLED: debugLogsEnabled,
       DEBUG_IDENTITY_LOG_URL: debugLogsEnabled ? modules.debugLog.buildDebugLogUrl(`${API_BASE_URL}/api/capture/batch`) : '',
       UPLOAD_INTERVAL_MS: 8000,
+      PROBE_SYNC_POLL_INTERVAL_MS: 2000,
+      PROBE_SYNC_WINDOW_MS: 30000,
       TAG_JOIN_SETTLE_MS: 1500,
       TAG_JOIN_NAME_WAIT_MS: 3500,
       TAG_JOIN_VIDEO_ONLY_MS: 5000,
@@ -38,6 +42,7 @@ importScripts(
     debugLog: modules.debugLog,
     mapping: modules.participantMapping,
     tagJoin: modules.tagJoin,
+    probeSync: modules.probeSync,
     upload: modules.upload,
     messages: modules.messages
   };
@@ -52,9 +57,18 @@ importScripts(
     context.messages.handleMessage(context, request, sender, sendResponse)
   ));
 
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    Promise.resolve(context.probeSync?.handleAlarm?.(context, alarm)).catch((err) => {
+      console.error('[Meet Capture] Probe sync alarm failed:', err);
+    });
+  });
+
   chrome.tabs.onRemoved.addListener((tabId) => {
     const session = context.sessions.get(tabId);
     if (session) {
+      if (context.probeSync) {
+        context.probeSync.clearProbeSync(context, session, tabId);
+      }
       if (session.tagJoin?.pollTimer) {
         clearTimeout(session.tagJoin.pollTimer);
       }

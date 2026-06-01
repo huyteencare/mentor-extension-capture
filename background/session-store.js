@@ -24,6 +24,9 @@
   }
 
   function resetSessionState(session, tabId) {
+    if (session.probeSync?.alarmName) {
+      chrome.alarms.clear(session.probeSync.alarmName);
+    }
     if (session.tagJoin?.pollTimer) {
       clearTimeout(session.tagJoin.pollTimer);
     }
@@ -52,6 +55,11 @@
     session.uploadQueue = [];
     session.uploadTimer = null;
     session.lastUploadTime = 0;
+    session.probeSync = {
+      alarmName: `meet-capture-probe-sync-tab-${tabId}`,
+      pollUntilAt: 0,
+      isSyncing: false
+    };
   }
 
   function createSession(context, tabId, url) {
@@ -93,7 +101,12 @@
       events: [],
       uploadQueue: [],
       uploadTimer: null,
-      lastUploadTime: 0
+      lastUploadTime: 0,
+      probeSync: {
+        alarmName: `meet-capture-probe-sync-tab-${tabId}`,
+        pollUntilAt: 0,
+        isSyncing: false
+      }
     };
     context.sessions.set(tabId, session);
     return session;
@@ -124,6 +137,9 @@
   async function rotateSessionForTab(context, tabId, url) {
     const existing = context.sessions.get(tabId);
     if (existing) {
+      if (existing.probeSync?.alarmName) {
+        chrome.alarms.clear(existing.probeSync.alarmName);
+      }
       await context.upload.uploadBatch(context, existing);
       if (existing.tagJoin?.pollTimer) {
         clearTimeout(existing.tagJoin.pollTimer);

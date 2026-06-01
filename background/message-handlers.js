@@ -276,40 +276,13 @@
 
   function syncProbeResults(context, tabId, request, sendResponse) {
     const session = context.sessionStore.getSession(context, tabId);
-    const results = Array.isArray(request.results) ? request.results : [];
-    results.forEach((entry) => {
-      const candidateId = String(entry?.candidateId || '').trim();
-      if (!candidateId) return;
-      const currentCandidate = session.attendanceCandidates.get(candidateId);
-      const attendanceCandidate = currentCandidate || {
-        candidateId,
-        participantDisplayName: String(entry?.participantDisplayName || '').trim() || 'unknown',
-        provisionalParticipantKey: entry?.provisionalParticipantKey || null,
-        evidence: { streamIds: Array.isArray(entry?.streamIds) ? entry.streamIds : [] },
-        matchType: 'mismatch_review'
-      };
-      const nextDebug = root.probeDebug.upsertIdentityProbeDebug(session, attendanceCandidate, entry);
-      if (nextDebug?.canonicalIdentityType && nextDebug?.canonicalIdentityValue) {
-        const owner = context.mapping.bindCanonicalIdentityFromProbeEntry(session, nextDebug);
-        if (owner) {
-          context.debugLog.logIdentityDebug(context, 'owner-canonical-identity-bound', {
-            source: 'background/message-handlers',
-            meetingId: session.meetingId,
-            sessionId: session.sessionId,
-            tabId,
-            candidateId,
-            provisionalParticipantKey: nextDebug.provisionalParticipantKey || null,
-            participantDisplayName: owner.displayName || owner.name || nextDebug.participantDisplayName,
-            canonicalIdentityType: owner.canonicalIdentityType || null,
-            canonicalIdentityValue: owner.canonicalIdentityValue || null,
-            payload: {
-              ownerId: owner.ownerId,
-              streamIds: owner.streamIds || []
-            }
-          });
-        }
-      }
-    });
+    context.probeSync.applyProbeResults(
+      context,
+      session,
+      tabId,
+      request.results,
+      'background/message-handlers'
+    );
     sendResponse({ ok: true });
     return true;
   }
@@ -339,6 +312,13 @@
 
       if (request.type === 'sync-probe-results') {
         return syncProbeResults(context, tabId, request, sendResponse);
+      }
+
+      if (request.type === 'request-probe-sync') {
+        const session = context.sessionStore.getSession(context, tabId);
+        context.probeSync.schedule(context, session, tabId, { immediate: true });
+        sendResponse({ ok: true });
+        return true;
       }
 
       if (request.type === 'get-session-state') {

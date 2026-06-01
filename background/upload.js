@@ -5,7 +5,11 @@
 
   function scheduleUpload(context, session, options = {}) {
     const immediate = !!options.immediate;
-    if (session.uploadTimer) return;
+    if (session.uploadTimer) {
+      if (!immediate) return;
+      clearTimeout(session.uploadTimer);
+      session.uploadTimer = null;
+    }
 
     session.uploadTimer = setTimeout(() => {
       uploadBatch(context, session, options);
@@ -51,6 +55,7 @@
 
     const chunkEvents = queue.filter((event) => event.type === 'chunk' && event.payload?.data);
     const otherEvents = queue.filter((event) => !(event.type === 'chunk' && event.payload?.data));
+    const uploadedAttendanceCandidate = queue.some((event) => event.type === 'attendance-candidate');
 
     let directSuccess = false;
     if (chunkEvents.length > 0) {
@@ -159,10 +164,14 @@
         const result = await response.json();
         session.lastUploadTime = Date.now();
         console.log(`[Meet Capture] Uploaded ${result.savedEventCount} events (direct=${directSuccess})`);
+        if (uploadedAttendanceCandidate && context.probeSync) {
+          context.probeSync.schedule(context, session, session.tabId, { immediate: true });
+        }
 
         chrome.tabs.sendMessage(session.tabId, {
           type: 'upload-success',
-          savedCount: result.savedEventCount
+          savedCount: result.savedEventCount,
+          shouldSyncProbeResults: uploadedAttendanceCandidate
         }).catch(() => {});
       } else {
         console.warn(`[Meet Capture] Batch upload failed: ${response.status}`);
