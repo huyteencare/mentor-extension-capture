@@ -3,12 +3,13 @@
 
   const root = globalThis.MeetCaptureBackground = globalThis.MeetCaptureBackground || {};
 
-  function scheduleUpload(context, session) {
+  function scheduleUpload(context, session, options = {}) {
+    const immediate = !!options.immediate;
     if (session.uploadTimer) return;
 
     session.uploadTimer = setTimeout(() => {
-      uploadBatch(context, session);
-    }, context.constants.UPLOAD_INTERVAL_MS);
+      uploadBatch(context, session, options);
+    }, immediate ? 0 : context.constants.UPLOAD_INTERVAL_MS);
   }
 
   function dataUrlToUint8Array(dataUrl) {
@@ -19,7 +20,7 @@
     return bytes;
   }
 
-  async function uploadBatch(context, session) {
+  async function uploadBatch(context, session, options = {}) {
     if (session.uploadTimer) {
       clearTimeout(session.uploadTimer);
       session.uploadTimer = null;
@@ -27,8 +28,26 @@
 
     if (session.uploadQueue.length === 0) return;
 
-    const queue = session.uploadQueue.slice();
-    session.uploadQueue = [];
+    const eventTypeFilter = Array.isArray(options.eventTypes) && options.eventTypes.length > 0
+      ? new Set(options.eventTypes)
+      : null;
+    const queue = [];
+    const remainingQueue = [];
+
+    for (const event of session.uploadQueue) {
+      const shouldUpload = !eventTypeFilter || eventTypeFilter.has(event.type);
+      if (shouldUpload) queue.push(event);
+      else remainingQueue.push(event);
+    }
+
+    session.uploadQueue = remainingQueue;
+
+    if (queue.length === 0) {
+      if (session.uploadQueue.length > 0) {
+        scheduleUpload(context, session);
+      }
+      return;
+    }
 
     const chunkEvents = queue.filter((event) => event.type === 'chunk' && event.payload?.data);
     const otherEvents = queue.filter((event) => !(event.type === 'chunk' && event.payload?.data));

@@ -119,7 +119,14 @@
     }
 
     console.log(`[Meet Capture] Queued event: ${type} (total: ${session.events.length})`);
-    context.upload.scheduleUpload(context, session);
+    if (type === 'attendance-candidate') {
+      context.upload.scheduleUpload(context, session, {
+        immediate: true,
+        eventTypes: ['attendance-candidate']
+      });
+    } else {
+      context.upload.scheduleUpload(context, session);
+    }
   }
 
   function findProbeDebugForGroup(session, group) {

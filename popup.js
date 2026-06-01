@@ -77,6 +77,7 @@
   const handlesFetched = new Set();
   // Persisted across popup open/close: "handle:meetCode" → prevents duplicate API calls
   let checkedInKeys = new Set();
+  let currentMeetCode = '';
 
   async function fetchHandleMapping(googleHandle) {
     if (handlesFetched.has(googleHandle)) return;
@@ -85,12 +86,15 @@
       const resp = await fetch(`${API_BASE_URL}/api/student-by-handle/${encodeURIComponent(googleHandle)}`);
       const data = await resp.json().catch(() => ({}));
       if (data.found) {
+        const key = `${googleHandle}:${currentMeetCode}`;
         emailMappings[googleHandle] = {
           ...emailMappings[googleHandle],
           studentEmail: data.studentEmail,
           displayName: data.displayName,
           role: data.role || 'student',
+          checkinStatus: checkedInKeys.has(key) ? 'checked_in' : (emailMappings[googleHandle]?.checkinStatus || 'idle'),
         };
+        updateUI();
       }
     } catch {}
   }
@@ -151,7 +155,7 @@
   }
 
   async function fetchBackendProbeResults(sessionId) {
-    if (!isDevMode() || !sessionId) return [];
+    if (!sessionId) return [];
     try {
       const response = await fetch(`${API_BASE_URL}/api/sessions/${encodeURIComponent(sessionId)}`);
       if (response.status === 404) {
@@ -220,7 +224,14 @@
   function renderEmailRow(mergedProbeDebug, isDebug) {
     if (isDebug) return '';
     const signedinUserUser = mergedProbeDebug?.signedinUserUser;
-    if (!signedinUserUser || signedinUserUser === '-') return '';
+    if (!signedinUserUser || signedinUserUser === '-') {
+      return `
+        <div class="email-row probing">
+          <input type="email" class="email-input" placeholder="Identifying..." disabled>
+          <button class="email-link-btn" disabled>&#183;&#183;&#183;</button>
+        </div>
+      `;
+    }
     const existing = emailMappings[signedinUserUser];
     const currentEmail = existing?.studentEmail || '';
     const isLinked = !!currentEmail;
@@ -326,6 +337,7 @@
     const active = document.activeElement;
     if (active?.classList?.contains('student-name') || active?.classList?.contains('email-input')) return;
 
+    currentMeetCode = response?.meetingId || '';
     const participants = response.participantNames || [];
     const saved = participants.filter(p => p.name);
     const debug = showAllStreamsCheckbox.checked
@@ -373,8 +385,15 @@
 
         tryMentorAutoCheckin(mentorNameInput.value.trim(), meetCode);
 
-        const backendProbeResults = await fetchBackendProbeResults(response.sessionId);
-        renderStudents(response, backendProbeResults);
+        // Render immediately with cached results — don't block on the API call
+        const cachedProbe = backendProbeCache.get(response?.sessionId) || [];
+        renderStudents(response, cachedProbe);
+        // Fetch fresh probe results in background; re-render only if data changed
+        fetchBackendProbeResults(response?.sessionId).then((fresh) => {
+          if (JSON.stringify(fresh) !== JSON.stringify(cachedProbe)) {
+            renderStudents(response, fresh);
+          }
+        });
       });
     });
   }

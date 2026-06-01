@@ -457,6 +457,8 @@ body.dev-mode label.show-all-label.dev-only {
 .email-input:focus { border-color: #4285f4; }
 .email-input.saved  { border-color: #34a853; background: #f6fef8; }
 .email-row.linked .email-input { border-color: #34a853; }
+.email-row.probing .email-input { color: #9aa0a6; background: #f8f9fa; border-color: #e0e0e0; cursor: default; }
+.email-row.probing .email-link-btn { background: #e0e0e0; color: #9aa0a6; letter-spacing: 2px; cursor: default; }
 
 .email-link-btn {
   padding: 4px 10px;
