@@ -78,6 +78,22 @@ importScripts(
       context.upload.uploadBatch(context, session);
       context.sessions.delete(tabId);
     }
+    const storageKey = `checkin_tab_${tabId}`;
+    chrome.storage.local.get(storageKey, (data) => {
+      const info = data[storageKey];
+      if (info?.googleHandle && info?.meetCode) {
+        fetch(`${API_BASE_URL}/api/auto-checkout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            googleHandle: info.googleHandle,
+            meetCode: info.meetCode,
+            leaveTime: new Date().toISOString()
+          })
+        }).catch(() => {});
+        chrome.storage.local.remove(storageKey);
+      }
+    });
   });
 
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -101,6 +117,24 @@ importScripts(
       context.sessionStore.isActiveMeetingId(nextMeetingId);
 
     if (leavingActiveMeeting || switchingMeetings || enteringFirstMeeting) {
+      if (leavingActiveMeeting) {
+        const storageKey = `checkin_tab_${tabId}`;
+        chrome.storage.local.get(storageKey, (data) => {
+          const info = data[storageKey];
+          if (info?.googleHandle && info?.meetCode) {
+            fetch(`${API_BASE_URL}/api/auto-checkout`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                googleHandle: info.googleHandle,
+                meetCode: info.meetCode,
+                leaveTime: new Date().toISOString()
+              })
+            }).catch(() => {});
+            chrome.storage.local.remove(storageKey);
+          }
+        });
+      }
       context.sessionStore.rotateSessionForTab(context, tabId, tab?.url || changeInfo.url).catch((err) => {
         console.error('[Meet Capture] Failed to rotate session:', err);
       });

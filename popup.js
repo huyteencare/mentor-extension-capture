@@ -106,6 +106,11 @@
     if (checkinAttempted.has(googleHandle)) return;
     checkinAttempted.add(googleHandle);
 
+    const [activeTab] = await new Promise(resolve =>
+      chrome.tabs.query({ active: true, currentWindow: true }, resolve)
+    );
+    const activeTabId = activeTab?.id;
+
     const body = { googleHandle, meetCode, joinTime: new Date().toISOString() };
     const resp = await fetch(`${API_BASE_URL}/api/auto-checkin`, {
       method: 'POST',
@@ -117,7 +122,11 @@
 
     if (result.ok) {
       checkedInKeys.add(key);
-      chrome.storage.local.set({ checkedInKeys: [...checkedInKeys] });
+      const storageUpdate = { checkedInKeys: [...checkedInKeys] };
+      if (activeTabId) {
+        storageUpdate[`checkin_tab_${activeTabId}`] = { googleHandle, meetCode };
+      }
+      chrome.storage.local.set(storageUpdate);
       emailMappings[googleHandle] = { ...emailMappings[googleHandle], checkinStatus: 'checked_in' };
       setTimeout(updateUI, 50);
     } else if (result.status === 'failed' || result.status === 'handle_not_linked') {

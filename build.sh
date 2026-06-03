@@ -20,6 +20,7 @@ files = [
     'background/participant-mapping.js',
     'background/tag-join.js',
     'background/upload.js',
+    'background/probe-sync.js',
     'background/message-handlers.js',
     'popup.html', 'popup.js', 'popup.css',
     'viewer.html', 'viewer.js', 'viewer.css',
