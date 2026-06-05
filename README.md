@@ -108,3 +108,5 @@ curl http://localhost:8787/api/sessions | jq '.sessions[0]'
 - **Audio mixing** — Meet may send per-participant audio tracks or a single SFU-mixed track. If mixed, you get combined audio for all students.
 - **DOM detection fragility** — name detection relies on Meet's DOM attributes; a Meet UI update can break auto-naming (manual fallback always works).
 - **Chunk continuity** — MediaRecorder chunks are not individually seekable; the viewer must always prepend the init chunk before playing non-init chunks.
+
+
