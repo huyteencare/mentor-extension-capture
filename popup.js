@@ -460,7 +460,9 @@
     } else {
       mentorCheckinBtn.textContent = 'Check In';
       mentorCheckinBtn.disabled = false;
-      mentorCheckinAttempted = false;
+      if (result.status !== 'session_not_found') {
+        mentorCheckinAttempted = false; // only reset for recoverable errors, not session_not_found
+      }
     }
   }
 
